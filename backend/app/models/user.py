@@ -11,6 +11,7 @@ from app.db.base import Base
 if TYPE_CHECKING:
     from app.models.glucose_record import GlucoseRecord
     from app.models.health_profile import HealthProfile
+    from app.models.meal_recommendation import MealRecommendation
 
 
 class User(Base):
@@ -51,6 +52,11 @@ class User(Base):
     )
     glucose_records: Mapped[List["GlucoseRecord"]] = relationship(
         "GlucoseRecord",
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+    meal_recommendations: Mapped[List["MealRecommendation"]] = relationship(
+        "MealRecommendation",
         back_populates="user",
         cascade="all, delete-orphan",
     )
