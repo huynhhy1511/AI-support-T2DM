@@ -1,5 +1,6 @@
 import json
 import uuid
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
@@ -116,7 +117,6 @@ class NutritionSafetyGuard:
         lowered = [c.lower().strip() for c in comorbidities if c and c.strip()]
         notes: List[str] = []
 
-        # 1. Bệnh thận mạn (CKD) -> Cần bác sĩ chuyên khoa đánh giá protein, kali, photpho, natri
         kidney_keywords = ["ckd", "thận", "suy thận", "kidney", "renal", "nephropathy"]
         if any(any(kw in c for kw in kidney_keywords) for c in lowered):
             return {
@@ -131,7 +131,6 @@ class NutritionSafetyGuard:
                 "notes": [],
             }
 
-        # 2. Tăng huyết áp / bệnh tim mạch -> Yêu cầu hạn chế natri (< 2000 mg/ngày)
         bp_keywords = ["hypertension", "tăng huyết áp", "huyết áp cao", "tim mạch", "cardiovascular"]
         low_sodium = any(any(kw in c for kw in bp_keywords) for c in lowered)
         if low_sodium:
@@ -143,6 +142,97 @@ class NutritionSafetyGuard:
             "is_restricted": False,
             "abstention_reason": None,
             "low_sodium_required": low_sodium,
+            "notes": notes,
+        }
+
+
+class EnergyCalculator:
+    """
+    Tính toán nhu cầu năng lượng cá thể hóa theo công thức Mifflin-St Jeor (1990)
+    và hệ số vận động thể lực, kèm kiểm tra ngưỡng an toàn và BMI.
+    """
+
+    ACTIVITY_FACTORS: Dict[str, float] = {
+        "sedentary": 1.2,
+        "light": 1.375,
+        "moderate": 1.55,
+        "active": 1.725,
+        "very_active": 1.9,
+    }
+
+    MEAL_RATIOS: Dict[str, float] = {
+        "breakfast": 0.25,
+        "lunch": 0.35,
+        "dinner": 0.30,
+        "snack": 0.10,
+    }
+
+    @classmethod
+    def calculate_daily_target(
+        cls,
+        health_profile: Optional[HealthProfile],
+        nutrition_goal: Optional[str] = None,
+    ) -> Dict[str, object]:
+        """
+        Trả về daily_target_kcal, bmr, tdee, bmi và các ghi chú chuyên môn nếu có.
+        Trả về target_kcal=None nếu thiếu thông tin nhân trắc học cơ bản.
+        """
+        if health_profile is None:
+            return {"target_kcal": None, "bmi": None, "bmr": None, "tdee": None, "notes": []}
+
+        dob = getattr(health_profile, "date_of_birth", None)
+        sex = getattr(health_profile, "sex", None)
+        height_cm = getattr(health_profile, "height_cm", None)
+        weight_kg = getattr(health_profile, "weight_kg", None)
+        activity = getattr(health_profile, "activity_level", None)
+
+        if not all([dob, sex, height_cm, weight_kg, activity]):
+            return {"target_kcal": None, "bmi": None, "bmr": None, "tdee": None, "notes": []}
+
+        today = date.today()
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        h = float(height_cm)
+        w = float(weight_kg)
+        bmi = round(w / ((h / 100.0) ** 2), 2) if h > 0 else 0.0
+
+        sex_l = str(sex).lower().strip()
+        if sex_l == "male":
+            bmr = 10.0 * w + 6.25 * h - 5.0 * age + 5.0
+            safe_floor = 1400.0
+        else:
+            bmr = 10.0 * w + 6.25 * h - 5.0 * age - 161.0
+            safe_floor = 1200.0
+
+        factor = cls.ACTIVITY_FACTORS.get(str(activity).lower().strip(), 1.2)
+        tdee = bmr * factor
+        target = tdee
+        notes: List[str] = []
+
+        goal_l = (nutrition_goal or "").lower().strip()
+        if goal_l == "weight_loss":
+            if bmi < 18.5:
+                notes.append(
+                    f"Cảnh báo chuyên môn: BMI hiện tại là {bmi:.1f} (thiếu cân). "
+                    "Không áp dụng mức thâm hụt năng lượng giảm cân; cần chuyên gia dinh dưỡng đánh giá."
+                )
+            else:
+                target = max(safe_floor, tdee - 400.0)
+                notes.append(
+                    f"Mục tiêu giảm cân an toàn: TDEE ước tính {tdee:.0f} kcal/ngày, mục tiêu gợi ý {target:.0f} kcal/ngày (giảm ~400 kcal, không dưới ngưỡng sàn {safe_floor:.0f} kcal)."
+                )
+        else:
+            target = max(safe_floor, tdee)
+
+        if bmi >= 30.0 or bmi < 18.5:
+            notes.append(
+                f"Chỉ số BMI={bmi:.1f} nằm ngoài ngưỡng bình thường: khuyến nghị có chuyên gia dinh dưỡng đánh giá định kỳ."
+            )
+
+        return {
+            "target_kcal": round(target, 0),
+            "bmi": bmi,
+            "bmr": round(bmr, 0),
+            "tdee": round(tdee, 0),
             "notes": notes,
         }
 
@@ -410,6 +500,7 @@ class MealComposer:
         low_sodium_required: bool = False,
         nutrition_goal: Optional[str] = None,
         avoid_food_ids: Optional[Set[uuid.UUID]] = None,
+        target_meal_kcal: Optional[float] = None,
     ) -> Tuple[List[RecommendedFoodItem], str, List[str]]:
         if not candidate_foods:
             return [], "Không tìm thấy thực phẩm phù hợp với các ràng buộc hiện tại.", [
@@ -477,22 +568,72 @@ class MealComposer:
             for item in scored_items[:2]:
                 selected_foods.append(cls._to_recommended_item(item))
 
-        # Portion adjustment (serving_multiplier) if carb exceeds target or weight_loss goal is set
+        # Add healthy cooking oil (F030) in lunch/dinner if available to reflect real cooking preparation
+        if meal_type in ["lunch", "dinner"]:
+            oil_items = [item for item in scored_items if "dầu" in item[0].name.lower()]
+            if oil_items:
+                oil_rec = cls._to_recommended_item(oil_items[0])
+                oil_rec.serving_multiplier = 0.5  # 5g = 44 kcal per meal
+                oil_rec.reasons.append("Dầu thực vật lành mạnh (5g) dùng trong chế biến món ăn")
+                selected_foods.append(oil_rec)
+
+        # Portion adjustment (serving_multiplier) to match personalized target_meal_kcal & carb ceiling
         max_carb_allowed = 55.0
         if custom_target and custom_target.max_carbohydrate_g:
             max_carb_allowed = custom_target.max_carbohydrate_g
         elif meal_type == "snack":
-            max_carb_allowed = 20.0
+            max_carb_allowed = 25.0
+
+        effective_target_kcal = (
+            custom_target.target_energy_kcal
+            if custom_target and custom_target.target_energy_kcal
+            else target_meal_kcal
+        )
+
+        # Scale up portions cleanly in 0.25x steps if personalized target_kcal is higher than base meal
+        if effective_target_kcal and selected_foods:
+            current_kcal = sum(f.energy_kcal * f.serving_multiplier for f in selected_foods)
+            current_carb = sum(f.carbohydrate_g * f.serving_multiplier for f in selected_foods)
+            # Prioritize scaling protein & staple (within carb limit), then snack/breakfast
+            scalable = [
+                f for f in selected_foods
+                if f.category in ["protein", "staple", "snack", "fruits"]
+                and "dầu" not in f.food_name.lower()
+            ]
+            # Sort protein first so carb doesn't spike unnecessarily
+            scalable.sort(key=lambda x: 0 if x.category == "protein" else 1)
+            for _ in range(8):
+                if current_kcal >= effective_target_kcal * 0.9:
+                    break
+                progressed = False
+                for item in scalable:
+                    if item.serving_multiplier >= 2.0:
+                        continue
+                    step = 0.25
+                    added_carb = item.carbohydrate_g * step
+                    if current_carb + added_carb > max_carb_allowed:
+                        continue
+                    item.serving_multiplier = round(item.serving_multiplier + step, 2)
+                    current_kcal += item.energy_kcal * step
+                    current_carb += added_carb
+                    progressed = True
+                    if current_kcal >= effective_target_kcal * 0.9:
+                        break
+                if not progressed:
+                    break
 
         total_carb = sum(f.carbohydrate_g * f.serving_multiplier for f in selected_foods)
         if total_carb > max_carb_allowed:
-            # Try adjusting staple serving_multiplier to 0.75 if staple carb is large
             for f in selected_foods:
                 if f.category == "staple" and f.carbohydrate_g > 25.0:
                     f.serving_multiplier = 0.75
                     f.reasons.append("Điều chỉnh khẩu phần 0.75x để kiểm soát tổng carbohydrate bữa ăn")
                     break
             total_carb = sum(f.carbohydrate_g * f.serving_multiplier for f in selected_foods)
+
+        safety_notes.append(
+            "Ghi chú chế biến: Lượng natri tính theo món ăn chuẩn; khi nấu nướng hạn chế nêm thêm muối, nước mắm hoặc đường tinh luyện."
+        )
 
         total_energy = sum(f.energy_kcal * f.serving_multiplier for f in selected_foods)
         total_protein = sum(f.protein_g * f.serving_multiplier for f in selected_foods)

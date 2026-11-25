@@ -23,6 +23,7 @@ from app.schemas.nutrition import (
 from app.services.food_service import get_food_by_id, list_foods, seed_sample_foods_if_empty
 from app.services.nutrition_engine import (
     ConstraintEngine,
+    EnergyCalculator,
     MealComposer,
     NutritionSafetyGuard,
 )
@@ -100,7 +101,13 @@ def generate_recommendation(
     food_pool = official_foods if official_foods else all_foods
 
     # 5. Apply Constraint Engine (strictly NO fallback to unsafe foods)
-    low_sodium_required = bool(clinical_check["low_sodium_required"])
+    active_preference = (
+        request.dietary_preference
+        or (health_profile.dietary_preference if health_profile else None)
+    )
+    pref_low_sodium = (active_preference or "").lower().strip() in ["low_sodium", "it_muoi", "ít muối"]
+    low_sodium_required = bool(clinical_check["low_sodium_required"]) or pref_low_sodium
+
     candidates = ConstraintEngine.filter_foods(
         foods=food_pool,
         request=request,
@@ -119,11 +126,19 @@ def generate_recommendation(
             missing_fields=missing_fields,
         )
 
-    # 6. Compose balanced meal using Scoring Engine and Plate Method
-    active_preference = (
-        request.dietary_preference
-        or (health_profile.dietary_preference if health_profile else None)
+    # 6. Calculate individualized energy target (BMR/TDEE) if profile is complete
+    energy_info = EnergyCalculator.calculate_daily_target(
+        health_profile=health_profile,
+        nutrition_goal=request.nutrition_goal,
     )
+    daily_target_kcal = energy_info.get("target_kcal")
+    target_meal_kcal = (
+        round(float(daily_target_kcal) * EnergyCalculator.MEAL_RATIOS.get(request.meal_type, 0.25), 1)
+        if daily_target_kcal
+        else None
+    )
+
+    # 7. Compose balanced meal using Scoring Engine and Plate Method
     items, meal_eval, safety_notes = MealComposer.compose(
         candidate_foods=candidates,
         meal_type=request.meal_type,
@@ -132,10 +147,14 @@ def generate_recommendation(
         low_sodium_required=low_sodium_required,
         nutrition_goal=request.nutrition_goal,
         avoid_food_ids=avoid_food_ids,
+        target_meal_kcal=target_meal_kcal,
     )
 
-    # Prepend clinical notes & incomplete profile limitation notice
+    # Prepend clinical notes, energy notes & incomplete profile limitation notice
     combined_notes: List[str] = list(clinical_check["notes"])
+    combined_notes.extend(energy_info.get("notes") or [])
+    if pref_low_sodium and not clinical_check["low_sodium_required"]:
+        combined_notes.append("Chế độ ăn ít muối (low_sodium): ưu tiên thực phẩm có hàm lượng natri thấp.")
     if missing_fields:
         combined_notes.append(
             f"Lưu ý giới hạn cá thể hóa: Hồ sơ chưa có đầy đủ ({', '.join(missing_fields)}); "

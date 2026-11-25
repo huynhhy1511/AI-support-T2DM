@@ -59,6 +59,7 @@ class FoodDatabase:
             sys.path.insert(0, str(backend_dir))
         from app.db.session import SessionLocal
         from app.models.food import Food
+        from app.services.nutrition_engine import get_food_extra
         from sqlalchemy import select
 
         session = SessionLocal()
@@ -87,6 +88,7 @@ class FoodDatabase:
                 else:
                     gi_cat = "Cao"
 
+                extra = get_food_extra(item)
                 loaded.append({
                     "food_id": food_id,
                     "name": clean_name,
@@ -98,8 +100,8 @@ class FoodDatabase:
                     "protein_g": float(item.protein_g),
                     "fat_g": float(item.fat_g),
                     "fiber_g": float(item.fiber_g or 0.0),
-                    "sodium_mg": 0.0,
-                    "allergens": "Không",
+                    "sodium_mg": extra["sodium_mg"],
+                    "allergens": extra["allergens"],
                     "glycemic_index": gi,
                     "gi_category": gi_cat,
                     "source": item.source_name or "Viện Dinh dưỡng Quốc gia",

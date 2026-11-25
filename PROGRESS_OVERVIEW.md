@@ -52,6 +52,7 @@ Hệ thống chỉ hỗ trợ tự quản lý, không thay thế bác sĩ, khôn
 | P8 | Tích hợp LLM và RAG Chain | Hoàn thành |
 | P9.1A | Food Database & PostgreSQL Migration | Hoàn thành |
 | P9.1B | Nutrition Recommendation & RAG Explanation | Hoàn thành |
+| P9.1C | Audit & Validation Nutrition Recommendation | Hoàn thành |
 | P9.2 | Exercise Monitoring (MediaPipe Pose) | Chưa triển khai |
 | P10 | Tích hợp, kiểm thử và đánh giá toàn hệ thống | Chưa triển khai |
 
@@ -128,4 +129,4 @@ Root & AI/
 4. Mọi cải tiến phải có kiểm thử và so sánh kết quả thực tế.
 5. Sau mỗi giai đoạn, cập nhật trạng thái và kết quả đánh giá vào tài liệu này.
 
-**Trạng thái hiện tại: Hoàn thành P1–P8, P9.1A và P9.1B (Nutrition Recommendation + RAG Explanation; 30/30 backend tests & 30 synthetic profiles benchmark PASSED). Sẵn sàng cho P9.2.**
+**Trạng thái hiện tại: Hoàn thành P1–P8, P9.1A, P9.1B và P9.1C (Audit & Validation: TDEE Mifflin-St Jeor, 30/30 backend tests & 30 synthetic profiles PASSED). Sẵn sàng cho P9.2.**
