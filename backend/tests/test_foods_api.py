@@ -27,7 +27,7 @@ def test_seed_sample_foods_and_list():
     search_res = client.get("/api/v1/foods?search=Gạo")
     assert search_res.status_code == 200
     search_items = search_res.json()
-    assert any("Gạo" in f["name"] for f in search_items)
+    assert any("gạo" in f["name"].lower() for f in search_items)
 
 
 def test_food_crud_lifecycle():

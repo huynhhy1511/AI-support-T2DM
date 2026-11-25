@@ -22,19 +22,92 @@ DEFAULT_JSON_PATH = BASE_DIR / "food_database.json"
 class FoodDatabase:
     """Quản lý và truy vấn cơ sở dữ liệu thực phẩm chuẩn hóa."""
 
-    def __init__(self, json_path: Optional[Path] = None):
+    def __init__(self, json_path: Optional[Path] = None, use_postgres: bool = True):
         self.json_path = json_path or DEFAULT_JSON_PATH
+        self.use_postgres = use_postgres
         self.foods: List[Dict[str, Any]] = []
         self._food_map: Dict[str, Dict[str, Any]] = {}
+        self.source_storage: str = "JSON"
         self.load()
 
     def load(self) -> None:
+        """Tải dữ liệu thực phẩm, ưu tiên PostgreSQL, fallback sang JSON."""
+        if self.use_postgres:
+            try:
+                self._load_from_postgres()
+                self.source_storage = "PostgreSQL"
+                return
+            except Exception as e:
+                # Fallback sang JSON nếu không kết nối được PostgreSQL
+                pass
+
+        self._load_from_json()
+        self.source_storage = "JSON"
+
+    def _load_from_json(self) -> None:
         """Tải dữ liệu thực phẩm từ file JSON."""
         if not self.json_path.exists():
             raise FileNotFoundError(f"Không tìm thấy file cơ sở dữ liệu: {self.json_path}")
         with open(self.json_path, "r", encoding="utf-8") as f:
             self.foods = json.load(f)
         self._food_map = {item["food_id"]: item for item in self.foods}
+
+    def _load_from_postgres(self) -> None:
+        """Tải dữ liệu thực phẩm từ PostgreSQL (bảng foods)."""
+        backend_dir = BASE_DIR / "backend"
+        if str(backend_dir) not in sys.path:
+            sys.path.insert(0, str(backend_dir))
+        from app.db.session import SessionLocal
+        from app.models.food import Food
+        from sqlalchemy import select
+
+        session = SessionLocal()
+        try:
+            db_foods = session.scalars(select(Food).where(Food.is_test_data == False)).all()
+            if not db_foods:
+                raise ValueError("Bảng foods trong PostgreSQL chưa có dữ liệu chính thức.")
+
+            loaded = []
+            for item in db_foods:
+                # Tách food_id từ name nếu có định dạng [F001] ...
+                raw_name = item.name
+                food_id = ""
+                clean_name = raw_name
+                if raw_name.startswith("[") and "]" in raw_name:
+                    food_id = raw_name[1:raw_name.index("]")]
+                    clean_name = raw_name[raw_name.index("]") + 1:].strip()
+
+                gi = float(item.glycemic_index) if item.glycemic_index is not None else 0.0
+                if gi == 0:
+                    gi_cat = "Rất thấp (0)"
+                elif gi < 55:
+                    gi_cat = "Thấp"
+                elif gi <= 69:
+                    gi_cat = "Trung bình"
+                else:
+                    gi_cat = "Cao"
+
+                loaded.append({
+                    "food_id": food_id,
+                    "name": clean_name,
+                    "category": item.category,
+                    "serving_size": float(item.serving_size_g),
+                    "serving_unit": f"{float(item.serving_size_g)}g",
+                    "energy_kcal": float(item.energy_kcal),
+                    "carb_g": float(item.carbohydrate_g),
+                    "protein_g": float(item.protein_g),
+                    "fat_g": float(item.fat_g),
+                    "fiber_g": float(item.fiber_g or 0.0),
+                    "sodium_mg": 0.0,
+                    "allergens": "Không",
+                    "glycemic_index": gi,
+                    "gi_category": gi_cat,
+                    "source": item.source_name or "Viện Dinh dưỡng Quốc gia",
+                })
+            self.foods = loaded
+            self._food_map = {item["food_id"]: item for item in self.foods if item["food_id"]}
+        finally:
+            session.close()
 
     def get_by_id(self, food_id: str) -> Optional[Dict[str, Any]]:
         """Lấy thông tin thực phẩm theo Food ID (vd: F001)."""

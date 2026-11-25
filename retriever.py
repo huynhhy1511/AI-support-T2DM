@@ -134,9 +134,50 @@ class MedicalRetriever:
             if len(results) >= top_k:
                 break
 
+        # Bổ sung thông tin chi tiết từ PostgreSQL nếu có kết nối
+        self._enrich_from_postgres(results)
+
         # Sắp xếp kết quả giảm dần theo similarity_score
         results.sort(key=lambda x: x["similarity_score"], reverse=True)
         return results
+
+    def _enrich_from_postgres(self, items: List[Dict[str, Any]]) -> None:
+        """Truy vấn PostgreSQL để lấy thông tin chi tiết và nguồn tài liệu chính thức."""
+        if not items:
+            return
+        try:
+            backend_dir = BASE_DIR / "backend"
+            if str(backend_dir) not in sys.path:
+                sys.path.insert(0, str(backend_dir))
+            from app.db.session import SessionLocal
+            from app.models.medical_knowledge import MedicalKnowledge
+            from sqlalchemy import select
+            from sqlalchemy.orm import joinedload
+
+            session = SessionLocal()
+            try:
+                kb_ids = [it["kb_id"] for it in items if it.get("kb_id")]
+                stmt = (
+                    select(MedicalKnowledge)
+                    .options(joinedload(MedicalKnowledge.source))
+                    .where(MedicalKnowledge.entry_id.in_(kb_ids))
+                )
+                records = {rec.entry_id: rec for rec in session.scalars(stmt).unique().all()}
+                for it in items:
+                    rec = records.get(it.get("kb_id"))
+                    if rec:
+                        it["population"] = rec.population
+                        it["evidence_grade"] = rec.evidence_grade
+                        it["knowledge_full"] = rec.knowledge
+                        if rec.source:
+                            it["source_organization"] = rec.source.organization
+                            it["source_document"] = rec.source.document_name
+                            it["source_url"] = rec.source.url
+            finally:
+                session.close()
+        except Exception:
+            # Nếu PostgreSQL offline, bỏ qua việc làm giàu thông tin và dùng metadata FAISS
+            pass
 
 
 # Singleton instance để tái sử dụng nhanh khi gọi hàm retrieve toàn cục
