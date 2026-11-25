@@ -27,3 +27,10 @@ Thumbs.db
 secrets/
 *.key
 *.pem
+
+# Temporary office files & cache
+~$*
+*.npy
+*.bak
+.cache/
+
