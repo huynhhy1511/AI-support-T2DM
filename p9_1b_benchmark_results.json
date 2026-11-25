@@ -1,0 +1,321 @@
+{
+  "metrics": {
+    "total_profiles": 30,
+    "non_abstain_cases": 25,
+    "expected_abstain_cases": 5,
+    "nutritional_calculation_accuracy_pct": 100.0,
+    "constraint_satisfaction_rate_pct": 100.0,
+    "allergy_violation_rate_pct": 0.0,
+    "personalization_rate_pct": 100.0,
+    "rag_groundedness_pct": 100.0,
+    "citation_accuracy_pct": 100.0,
+    "abstention_accuracy_pct": 100.0
+  },
+  "details": [
+    {
+      "id": "P01",
+      "group": "weight_control",
+      "kcal": 955.0,
+      "carb": 53.1,
+      "sodium": 1749.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P02",
+      "group": "weight_control",
+      "kcal": 955.0,
+      "carb": 53.1,
+      "sodium": 1749.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P03",
+      "group": "weight_control",
+      "kcal": 955.0,
+      "carb": 53.1,
+      "sodium": 1749.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P04",
+      "group": "weight_control",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P05",
+      "group": "weight_control",
+      "kcal": 955.0,
+      "carb": 53.1,
+      "sodium": 1749.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P06",
+      "group": "weight_control",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P07",
+      "group": "activity_level",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P08",
+      "group": "activity_level",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P09",
+      "group": "activity_level",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P10",
+      "group": "activity_level",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P11",
+      "group": "activity_level",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P12",
+      "group": "preference",
+      "kcal": 829.0,
+      "carb": 73.2,
+      "sodium": 1011.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P13",
+      "group": "preference",
+      "kcal": 829.0,
+      "carb": 73.2,
+      "sodium": 1011.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P14",
+      "group": "preference",
+      "kcal": 937.0,
+      "carb": 47.1,
+      "sodium": 1499.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P15",
+      "group": "preference",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P16",
+      "group": "preference",
+      "kcal": 829.0,
+      "carb": 73.2,
+      "sodium": 1011.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P17",
+      "group": "allergy",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P18",
+      "group": "allergy",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P19",
+      "group": "allergy",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P20",
+      "group": "allergy",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P21",
+      "group": "allergy",
+      "kcal": 1195.0,
+      "carb": 90.1,
+      "sodium": 1549.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P22",
+      "group": "hypertension",
+      "kcal": 1098.0,
+      "carb": 111.5,
+      "sodium": 586.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P23",
+      "group": "hypertension",
+      "kcal": 1098.0,
+      "carb": 111.5,
+      "sodium": 586.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P24",
+      "group": "hypertension",
+      "kcal": 1166.0,
+      "carb": 111.5,
+      "sodium": 570.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P25",
+      "group": "hypertension",
+      "kcal": 792.0,
+      "carb": 109.7,
+      "sodium": 425.0,
+      "calc_ok": true,
+      "cons_ok": true,
+      "grounded": true,
+      "cit_ok": true
+    },
+    {
+      "id": "P26",
+      "group": "ckd_abstention",
+      "abstained": true,
+      "ok": true
+    },
+    {
+      "id": "P27",
+      "group": "ckd_abstention",
+      "abstained": true,
+      "ok": true
+    },
+    {
+      "id": "P28",
+      "group": "ckd_abstention",
+      "abstained": true,
+      "ok": true
+    },
+    {
+      "id": "P29",
+      "group": "incomplete_abstention",
+      "abstained": true,
+      "ok": true
+    },
+    {
+      "id": "P30",
+      "group": "incomplete_abstention",
+      "abstained": true,
+      "ok": true
+    }
+  ]
+}
