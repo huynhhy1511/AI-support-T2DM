@@ -216,3 +216,90 @@ def test_meal_composer_with_valid_foods_works_normally():
     assert "Đĩa ăn" in meal_eval
 
 
+def test_constraint_engine_vegan_excludes_eggs_and_dairy():
+    """Verify vegan constraint excludes meats, fish, eggs, and dairy products."""
+    chicken = _make_dummy_food("Ức gà phi lê", "protein", 0, 30, 3)
+    salmon = _make_dummy_food("Cá hồi phi lê", "protein", 0, 22, 10)
+    egg = _make_dummy_food("Trứng gà luộc", "protein", 0.6, 6.3, 5.3)
+    yogurt = _make_dummy_food("Sữa chua không đường", "dairy", 4.5, 12, 0.5)
+    tofu = _make_dummy_food("Đậu phụ trắng hấp", "protein", 2, 10, 5)
+    broccoli = _make_dummy_food("Bông cải xanh luộc", "vegetables", 8, 3, 0.5, fiber=3.5)
+
+    request = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="lunch",
+        dietary_preference="vegan",
+    )
+
+    filtered = ConstraintEngine.filter_foods(
+        foods=[chicken, salmon, egg, yogurt, tofu, broccoli],
+        request=request,
+    )
+
+    filtered_names = [f.name for f in filtered]
+    assert "Trứng gà luộc" not in filtered_names
+    assert "Sữa chua không đường" not in filtered_names
+    assert "Ức gà phi lê" not in filtered_names
+    assert "Cá hồi phi lê" not in filtered_names
+    assert "Đậu phụ trắng hấp" in filtered_names
+    assert "Bông cải xanh luộc" in filtered_names
+
+    # Also test Vietnamese keyword "thuần chay"
+    request_vn = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="lunch",
+        dietary_preference="thuần chay",
+    )
+    filtered_vn = ConstraintEngine.filter_foods(
+        foods=[chicken, salmon, egg, yogurt, tofu, broccoli],
+        request=request_vn,
+    )
+    filtered_vn_names = [f.name for f in filtered_vn]
+    assert "Trứng gà luộc" not in filtered_vn_names
+    assert "Sữa chua không đường" not in filtered_vn_names
+    assert "Đậu phụ trắng hấp" in filtered_vn_names
+
+
+def test_constraint_engine_vegetarian_allows_eggs_and_dairy():
+    """Verify vegetarian constraint excludes meats and fish, but allows eggs and dairy."""
+    chicken = _make_dummy_food("Ức gà phi lê", "protein", 0, 30, 3)
+    salmon = _make_dummy_food("Cá hồi phi lê", "protein", 0, 22, 10)
+    egg = _make_dummy_food("Trứng gà luộc", "protein", 0.6, 6.3, 5.3)
+    yogurt = _make_dummy_food("Sữa chua không đường", "dairy", 4.5, 12, 0.5)
+    tofu = _make_dummy_food("Đậu phụ trắng hấp", "protein", 2, 10, 5)
+
+    request = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="lunch",
+        dietary_preference="vegetarian",
+    )
+
+    filtered = ConstraintEngine.filter_foods(
+        foods=[chicken, salmon, egg, yogurt, tofu],
+        request=request,
+    )
+
+    filtered_names = [f.name for f in filtered]
+    assert "Ức gà phi lê" not in filtered_names
+    assert "Cá hồi phi lê" not in filtered_names
+    assert "Trứng gà luộc" in filtered_names
+    assert "Sữa chua không đường" in filtered_names
+    assert "Đậu phụ trắng hấp" in filtered_names
+
+    # Also test Vietnamese keyword "ăn chay"
+    request_vn = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="lunch",
+        dietary_preference="ăn chay",
+    )
+    filtered_vn = ConstraintEngine.filter_foods(
+        foods=[chicken, salmon, egg, yogurt, tofu],
+        request=request_vn,
+    )
+    filtered_vn_names = [f.name for f in filtered_vn]
+    assert "Trứng gà luộc" in filtered_vn_names
+    assert "Sữa chua không đường" in filtered_vn_names
+    assert "Ức gà phi lê" not in filtered_vn_names
+
+
+

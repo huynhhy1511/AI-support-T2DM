@@ -15,7 +15,7 @@ from app.schemas.nutrition import (
     MealRecommendationResponse,
     RecommendedFoodItem,
 )
-from app.services.food_service import list_foods, seed_sample_foods_if_empty
+from app.services.food_service import list_foods
 from app.services.nutrition_engine import (
     ConstraintEngine,
     MealComposer,
@@ -25,24 +25,21 @@ from app.services.nutrition_engine import (
 def generate_recommendation(
     db: Session, request: MealRecommendationRequest
 ) -> MealRecommendationResponse:
-    # 1. Ensure test foods are available if database has none
-    seed_sample_foods_if_empty(db)
-
-    # 2. Get user's health profile if exists
+    # 1. Get user's health profile if exists
     stmt_profile = select(HealthProfile).where(HealthProfile.user_id == request.user_id)
     health_profile = db.scalars(stmt_profile).first()
 
-    # 3. Retrieve all candidate food items
+    # 2. Retrieve all candidate food items
     all_foods = list_foods(db, limit=200)
 
-    # 4. Apply Constraint Engine
+    # 3. Apply Constraint Engine
     candidates = ConstraintEngine.filter_foods(
         foods=all_foods,
         request=request,
         health_profile=health_profile,
     )
 
-    # 5. Compose balanced meal using Scoring Engine and Plate Method
+    # 4. Compose balanced meal using Scoring Engine and Plate Method
     active_preference = (
         request.dietary_preference
         or (health_profile.dietary_preference if health_profile else None)
@@ -54,7 +51,7 @@ def generate_recommendation(
         custom_target=request.custom_target,
     )
 
-    # 6. Calculate total nutrients
+    # 5. Calculate total nutrients
     tot_energy = round(sum(i.energy_kcal * i.serving_multiplier for i in items), 1)
     tot_carb = round(sum(i.carbohydrate_g * i.serving_multiplier for i in items), 1)
     tot_protein = round(sum(i.protein_g * i.serving_multiplier for i in items), 1)

@@ -48,6 +48,42 @@ class ScoringConfig:
 DEFAULT_SCORING_CONFIG = ScoringConfig()
 
 
+MEAT_AND_SEAFOOD_KEYWORDS = [
+    "gà",
+    "thịt",
+    "cá",
+    "bò",
+    "heo",
+    "lợn",
+    "vịt",
+    "chicken",
+    "salmon",
+    "meat",
+    "pork",
+    "beef",
+    "tôm",
+    "cua",
+    "mực",
+    "hải sản",
+    "seafood",
+]
+
+ANIMAL_BYPRODUCT_KEYWORDS = [
+    "trứng",
+    "egg",
+    "sữa",
+    "milk",
+    "yogurt",
+    "sữa chua",
+    "cheese",
+    "phô mai",
+    "bơ",
+    "butter",
+    "mật ong",
+    "honey",
+]
+
+
 class ConstraintEngine:
     """Rule-based filtering for meals based on user profile, exclusions, and dietary constraints."""
 
@@ -85,21 +121,39 @@ class ConstraintEngine:
             if any(kw in name_lower for kw in excluded_keywords):
                 continue
 
-            # Rule 3: Vegetarian constraint
-            if pref_lower in ["vegetarian", "chay", "vegan"]:
-                meat_keywords = [
-                    "gà",
-                    "thịt",
-                    "cá",
-                    "bò",
-                    "heo",
-                    "chicken",
-                    "salmon",
-                    "meat",
-                    "tôm",
-                    "cua",
-                ]
-                if any(mk in name_lower for mk in meat_keywords):
+            # Rule 3: Vegetarian vs Vegan constraints
+            # Group 3A: Vegan (Thuần chay) - Loai bo thit, ca/hai san VA toan bo pham vat tu dong vat (trung, sua, etc.)
+            if pref_lower in ["vegan", "thuần chay"]:
+                if food.category == "dairy":
+                    continue
+                if any(mk in name_lower for mk in MEAT_AND_SEAFOOD_KEYWORDS):
+                    continue
+                if any(ak in name_lower for ak in ANIMAL_BYPRODUCT_KEYWORDS):
+                    continue
+
+            # Group 3B: Vegetarian (An chay co trung/sua) - Chi loai bo thit/hai san, van cho phep trung va sua
+            elif pref_lower in ["vegetarian", "chay", "ăn chay"]:
+                if any(ek in name_lower for ek in ["trứng", "egg"]):
+                    # Trứng gà / trứng vịt được phép cho người ăn chay, trừ khi có kèm thịt/hải sản thực sự
+                    real_meat_keywords = [
+                        "thịt",
+                        "bò",
+                        "heo",
+                        "lợn",
+                        "cá",
+                        "tôm",
+                        "cua",
+                        "mực",
+                        "hải sản",
+                        "salmon",
+                        "pork",
+                        "beef",
+                        "meat",
+                        "seafood",
+                    ]
+                    if any(rmk in name_lower for rmk in real_meat_keywords):
+                        continue
+                elif any(mk in name_lower for mk in MEAT_AND_SEAFOOD_KEYWORDS):
                     continue
 
             # Rule 4: Extreme sugar filter for standalone staples/proteins
@@ -198,10 +252,27 @@ class NutritionScoringEngine:
         if preference:
             pref = preference.lower().strip()
             name_lower = food.name.lower()
-            if pref in ["vegetarian", "chay", "vegan"] and (
+            if pref in ["vegan", "thuần chay"]:
+                is_animal_product = (
+                    food.category == "dairy"
+                    or any(mk in name_lower for mk in MEAT_AND_SEAFOOD_KEYWORDS)
+                    or any(ak in name_lower for ak in ANIMAL_BYPRODUCT_KEYWORDS)
+                )
+                if not is_animal_product and (
+                    food.category in ["vegetables", "fruits"]
+                    or "tofu" in name_lower
+                    or "đậu" in name_lower
+                    or food.category == "staple"
+                ):
+                    score += config.preference_match_bonus
+                    reasons.append(
+                        f"Phù hợp với chế độ thuần chay (+{config.preference_match_bonus:.0f}đ)"
+                    )
+            elif pref in ["vegetarian", "chay", "ăn chay"] and (
                 food.category in ["vegetables", "fruits", "dairy"]
                 or "tofu" in name_lower
                 or "đậu" in name_lower
+                or "trứng" in name_lower
             ):
                 score += config.preference_match_bonus
                 reasons.append(

@@ -1,9 +1,15 @@
 import uuid
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def ensure_sample_foods():
+    client.post("/api/v1/foods/seed-sample")
 
 
 def test_meal_recommendation_lifecycle_and_history():
@@ -63,6 +69,20 @@ def test_meal_recommendation_lifecycle_and_history():
         item_names = [i["food_name"].lower() for i in veg_items]
         # Should not contain chicken or salmon
         assert not any("gà" in n or "hồi" in n for n in item_names)
+
+        # 4b. Generate Vegan Recommendation (should exclude meats, chicken, salmon, eggs, and dairy)
+        vegan_req = {
+            "user_id": user_id,
+            "meal_type": "lunch",
+            "dietary_preference": "vegan",
+        }
+        vegan_res = client.post("/api/v1/nutrition/recommend", json=vegan_req)
+        assert vegan_res.status_code == 200
+        vegan_items = vegan_res.json()["items"]
+        vegan_names = [i["food_name"].lower() for i in vegan_items]
+        assert not any(
+            "gà" in n or "hồi" in n or "trứng" in n or "sữa" in n for n in vegan_names
+        )
 
         # 5. Check recommendation history endpoint
         hist_res = client.get(f"/api/v1/nutrition/recommendations/user/{user_id}")
@@ -160,4 +180,36 @@ def test_recommendation_user_allergy_specific_food():
 
     finally:
         client.delete(f"/api/v1/users/{user_id}")
+
+
+def test_recommendation_does_not_auto_seed_when_db_empty():
+    """Verify that when foods table is empty, generate_recommendation returns empty items and does NOT seed the database."""
+    from unittest.mock import MagicMock
+    from app.models.food import Food
+    from app.schemas.nutrition import MealRecommendationRequest
+    from app.services.nutrition_service import generate_recommendation
+
+    mock_db = MagicMock()
+    # Mock empty database: no profile and no foods
+    mock_db.scalars.return_value.first.return_value = None
+    mock_db.scalars.return_value.all.return_value = []
+    mock_db.query.return_value.count.return_value = 0
+
+    req = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="lunch",
+    )
+
+    result = generate_recommendation(mock_db, req)
+
+    # 1. Recommendation is safely empty
+    assert result.items == []
+    assert result.total_energy_kcal == 0.0
+    assert "Không tìm thấy thực phẩm phù hợp" in result.meal_balance_evaluation
+
+    # 2. Database was NOT seeded with Food instances
+    added_objects = [call[0][0] for call in mock_db.add.call_args_list if call[0]]
+    assert not any(isinstance(obj, Food) for obj in added_objects)
+    assert mock_db.query(Food).count() == 0
+
 
