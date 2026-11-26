@@ -4,7 +4,9 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import ensure_user_ownership, get_current_user
 from app.db.session import get_db
+from app.models.user import User
 from app.schemas.user import UserCreate, UserResponse, UserUpdate
 from app.services import user_service
 
@@ -54,7 +56,9 @@ def list_users_endpoint(
 def get_user_endpoint(
     user_id: uuid.UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> UserResponse:
+    ensure_user_ownership(current_user, user_id)
     user = user_service.get_user_by_id(db, user_id)
     if not user:
         raise HTTPException(
@@ -74,7 +78,9 @@ def update_user_endpoint(
     user_id: uuid.UUID,
     user_in: UserUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> UserResponse:
+    ensure_user_ownership(current_user, user_id)
     user = user_service.update_user(db, user_id, user_in)
     if not user:
         raise HTTPException(
@@ -93,7 +99,9 @@ def update_user_endpoint(
 def delete_user_endpoint(
     user_id: uuid.UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
+    ensure_user_ownership(current_user, user_id)
     success = user_service.delete_user(db, user_id)
     if not success:
         raise HTTPException(

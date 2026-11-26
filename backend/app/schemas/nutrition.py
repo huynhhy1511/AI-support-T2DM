@@ -36,6 +36,8 @@ class RecommendedFoodItem(BaseModel):
     sugar_g: Optional[float] = 0.0
     glycemic_index: Optional[float] = None
     glycemic_load: Optional[float] = None
+    sodium_mg: Optional[float] = None
+    saturated_fat_g: Optional[float] = None
     score: float
     reasons: List[str]
     item_warning: Optional[str] = None

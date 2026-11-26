@@ -93,3 +93,52 @@ def test_food_validation_errors():
     res = client.post("/api/v1/foods", json=invalid_payload)
     assert res.status_code == 422
 
+
+def test_food_micronutrients_sodium_and_saturated_fat():
+    """Verify creating/updating food with sodium_mg & saturated_fat_g and rejecting negative values."""
+    food_payload = {
+        "name": "Cá thu kho nhạt (Braised Mackerel)",
+        "category": "protein",
+        "serving_size_g": 100.0,
+        "energy_kcal": 190.0,
+        "carbohydrate_g": 2.0,
+        "protein_g": 20.0,
+        "fat_g": 11.0,
+        "sodium_mg": 320.5,
+        "saturated_fat_g": 2.8,
+        "is_test_data": True,
+    }
+    res = client.post("/api/v1/foods", json=food_payload)
+    assert res.status_code == 201, res.text
+    data = res.json()
+    food_id = data["id"]
+    assert data["sodium_mg"] == 320.5
+    assert data["saturated_fat_g"] == 2.8
+
+    try:
+        # Update micronutrients
+        upd_res = client.put(
+            f"/api/v1/foods/{food_id}",
+            json={"sodium_mg": 450.0, "saturated_fat_g": 3.5},
+        )
+        assert upd_res.status_code == 200
+        assert upd_res.json()["sodium_mg"] == 450.0
+        assert upd_res.json()["saturated_fat_g"] == 3.5
+
+        # Negative sodium_mg should be rejected with 422
+        neg_sodium = client.post(
+            "/api/v1/foods",
+            json={**food_payload, "name": "Bad Sodium", "sodium_mg": -10.0},
+        )
+        assert neg_sodium.status_code == 422
+
+        # Negative saturated_fat_g should be rejected with 422
+        neg_sat = client.post(
+            "/api/v1/foods",
+            json={**food_payload, "name": "Bad Sat Fat", "saturated_fat_g": -1.5},
+        )
+        assert neg_sat.status_code == 422
+    finally:
+        client.delete(f"/api/v1/foods/{food_id}")
+
+

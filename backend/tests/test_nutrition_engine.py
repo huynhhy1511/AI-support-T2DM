@@ -399,5 +399,36 @@ def test_meal_composer_clamps_extreme_targets_with_warning():
     assert any("tối đa 2.0x" in w for w in high_warnings)
 
 
+def test_scoring_and_safety_notes_sodium_and_saturated_fat():
+    """Verify high sodium (>500mg) and high saturated fat (>5g) incur penalties and trigger cardiovascular safety notes (>700mg / >7g), while None is handled safely."""
+    staple = _make_dummy_food("Gạo lứt", "staple", 35, 4, 1, fiber=3, gi=55, gl=19)
+    staple.sodium_mg = 5.0
+    staple.saturated_fat_g = 0.3
+
+    salty_fatty_protein = _make_dummy_food("Thịt kho mặn", "protein", 2, 20, 18, fiber=0)
+    salty_fatty_protein.sodium_mg = 850.0  # > 500mg item & > 700mg meal
+    salty_fatty_protein.saturated_fat_g = 8.0  # > 5g item & > 7g meal
+
+    veg = _make_dummy_food("Bông cải xanh", "vegetables", 8, 3, 0.5, fiber=3.5, gi=15)
+    # Intentionally leave sodium_mg and saturated_fat_g as None on veg to test safe None handling
+
+    # 1. Verify item-level scoring penalties
+    score, reasons, _ = NutritionScoringEngine.score_item(salty_fatty_protein)
+    assert any("Natri cao" in r for r in reasons)
+    assert any("Chất béo bão hòa cao" in r for r in reasons)
+
+    # 2. Verify meal-level cardiovascular safety notes
+    items, _, safety_notes = MealComposer.compose(
+        candidate_foods=[staple, salty_fatty_protein, veg],
+        meal_type="lunch",
+    )
+    assert any("Cảnh báo tim mạch: Tổng lượng natri bữa ăn" in note for note in safety_notes)
+    assert any("Cảnh báo tim mạch: Tổng chất béo bão hòa" in note for note in safety_notes)
+    protein_item = next(i for i in items if i.food_name == "Thịt kho mặn")
+    assert protein_item.sodium_mg == 850.0
+    assert protein_item.saturated_fat_g == 8.0
+
+
+
 
 

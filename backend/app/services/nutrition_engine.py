@@ -28,6 +28,8 @@ class ScoringConfig:
         sugar_penalty_per_gram: float = 1.0,
         lean_protein_bonus: float = 10.0,
         high_fat_penalty: float = 8.0,
+        high_sodium_penalty: float = 8.0,
+        high_saturated_fat_penalty: float = 8.0,
         preference_match_bonus: float = 10.0,
     ):
         self.base_score = base_score
@@ -41,6 +43,8 @@ class ScoringConfig:
         self.sugar_penalty_per_gram = sugar_penalty_per_gram
         self.lean_protein_bonus = lean_protein_bonus
         self.high_fat_penalty = high_fat_penalty
+        self.high_sodium_penalty = high_sodium_penalty
+        self.high_saturated_fat_penalty = high_saturated_fat_penalty
         self.preference_match_bonus = preference_match_bonus
 
 
@@ -248,6 +252,19 @@ class NutritionScoringEngine:
                 f"Chất béo tương đối cao ({fat:.1f}g) (-{config.high_fat_penalty:.0f}đ)"
             )
 
+        # 5b. Cardiovascular Risk Micronutrients (Sodium & Saturated Fat)
+        if food.sodium_mg is not None and float(food.sodium_mg) > 500.0:
+            score -= config.high_sodium_penalty
+            reasons.append(
+                f"Natri cao ({float(food.sodium_mg):.0f}mg/khẩu phần) (-{config.high_sodium_penalty:.0f}đ)"
+            )
+
+        if food.saturated_fat_g is not None and float(food.saturated_fat_g) > 5.0:
+            score -= config.high_saturated_fat_penalty
+            reasons.append(
+                f"Chất béo bão hòa cao ({float(food.saturated_fat_g):.1f}g/khẩu phần) (-{config.high_saturated_fat_penalty:.0f}đ)"
+            )
+
         # 6. Dietary Preference Match
         if preference:
             pref = preference.lower().strip()
@@ -428,6 +445,26 @@ class MealComposer:
                 "Lượng chất xơ trong bữa ăn còn thấp (< 4g). Hãy bổ sung thêm rau xanh luộc hoặc salad để làm chậm hấp thu đường."
             )
 
+        # 5. Cardiovascular safety notes (Sodium & Saturated Fat)
+        total_sodium = round(
+            sum(f.sodium_mg for f in selected_foods if f.sodium_mg is not None), 2
+        )
+        total_sat_fat = round(
+            sum(f.saturated_fat_g for f in selected_foods if f.saturated_fat_g is not None), 2
+        )
+
+        if total_sodium > 700.0:
+            safety_notes.append(
+                f"Cảnh báo tim mạch: Tổng lượng natri bữa ăn ({total_sodium:.0f}mg) vượt ngưỡng 700mg/bữa. "
+                f"Khuyến nghị hạn chế muối và nước chấm để kiểm soát huyết áp."
+            )
+
+        if total_sat_fat > 7.0:
+            safety_notes.append(
+                f"Cảnh báo tim mạch: Tổng chất béo bão hòa ({total_sat_fat:.1f}g) vượt ngưỡng 7g/bữa. "
+                f"Khuyến nghị giảm mỡ động vật để bảo vệ tim mạch."
+            )
+
         meal_eval = (
             f"Bữa ăn cấu trúc theo nguyên tắc Đĩa ăn cho bệnh nhân đái tháo đường: "
             f"Tổng năng lượng {total_energy:.0f} kcal, "
@@ -513,6 +550,16 @@ class MealComposer:
             glycemic_load=(
                 round(float(food.glycemic_load) * multiplier, 2)
                 if food.glycemic_load is not None
+                else None
+            ),
+            sodium_mg=(
+                round(float(food.sodium_mg) * multiplier, 2)
+                if food.sodium_mg is not None
+                else None
+            ),
+            saturated_fat_g=(
+                round(float(food.saturated_fat_g) * multiplier, 2)
+                if food.saturated_fat_g is not None
                 else None
             ),
             score=score,
