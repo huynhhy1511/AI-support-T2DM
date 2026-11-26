@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     DateTime,
+    Float,
     Numeric,
     String,
     text,
@@ -35,6 +36,8 @@ class Food(Base):
             name="check_food_gi_range",
         ),
         CheckConstraint("glycemic_load IS NULL OR glycemic_load >= 0", name="check_food_gl_non_negative"),
+        CheckConstraint("sodium_mg IS NULL OR sodium_mg >= 0", name="ck_foods_sodium_non_negative"),
+        CheckConstraint("saturated_fat_g IS NULL OR saturated_fat_g >= 0", name="ck_foods_saturated_fat_non_negative"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -91,6 +94,14 @@ class Food(Base):
     )
     glycemic_load: Mapped[Optional[Decimal]] = mapped_column(
         Numeric(5, 2),
+        nullable=True,
+    )
+    sodium_mg: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    saturated_fat_g: Mapped[Optional[float]] = mapped_column(
+        Float,
         nullable=True,
     )
     is_test_data: Mapped[bool] = mapped_column(

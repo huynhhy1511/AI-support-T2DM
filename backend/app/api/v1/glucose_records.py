@@ -5,7 +5,9 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import ensure_user_ownership, get_current_user
 from app.db.session import get_db
+from app.models.user import User
 from app.schemas.glucose_record import (
     GlucoseRecordCreate,
     GlucoseRecordResponse,
@@ -27,7 +29,9 @@ router = APIRouter(prefix="/glucose-records", tags=["glucose-records"])
 def create_glucose_record_endpoint(
     record_in: GlucoseRecordCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> GlucoseRecordResponse:
+    ensure_user_ownership(current_user, record_in.user_id)
     # 1. Verify user exists
     user = user_service.get_user_by_id(db, record_in.user_id)
     if not user:
@@ -54,7 +58,9 @@ def list_user_glucose_records_endpoint(
     skip: int = Query(0, ge=0, description="Pagination offset"),
     limit: int = Query(50, ge=1, le=100, description="Pagination limit"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> List[GlucoseRecordResponse]:
+    ensure_user_ownership(current_user, user_id)
     # Verify user exists
     user = user_service.get_user_by_id(db, user_id)
     if not user:
@@ -85,7 +91,9 @@ def get_user_glucose_stats_endpoint(
     user_id: uuid.UUID,
     unit: str = Query("mmol/L", description="Target unit for statistics ('mmol/L' or 'mg/dL')"),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> GlucoseStatsResponse:
+    ensure_user_ownership(current_user, user_id)
     # Verify user exists
     user = user_service.get_user_by_id(db, user_id)
     if not user:
@@ -106,6 +114,7 @@ def get_user_glucose_stats_endpoint(
 def get_glucose_record_endpoint(
     record_id: uuid.UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> GlucoseRecordResponse:
     record = glucose_service.get_glucose_record_by_id(db, record_id)
     if not record:
@@ -113,6 +122,7 @@ def get_glucose_record_endpoint(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Glucose record with id '{record_id}' not found.",
         )
+    ensure_user_ownership(current_user, record.user_id)
     return record
 
 
@@ -126,13 +136,16 @@ def update_glucose_record_endpoint(
     record_id: uuid.UUID,
     record_in: GlucoseRecordUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> GlucoseRecordResponse:
-    record = glucose_service.update_glucose_record(db, record_id, record_in)
-    if not record:
+    existing = glucose_service.get_glucose_record_by_id(db, record_id)
+    if not existing:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Glucose record with id '{record_id}' not found.",
         )
+    ensure_user_ownership(current_user, existing.user_id)
+    record = glucose_service.update_glucose_record(db, record_id, record_in)
     return record
 
 
@@ -145,7 +158,15 @@ def update_glucose_record_endpoint(
 def delete_glucose_record_endpoint(
     record_id: uuid.UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
+    existing = glucose_service.get_glucose_record_by_id(db, record_id)
+    if not existing:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Glucose record with id '{record_id}' not found.",
+        )
+    ensure_user_ownership(current_user, existing.user_id)
     success = glucose_service.delete_glucose_record(db, record_id)
     if not success:
         raise HTTPException(

@@ -3,7 +3,9 @@ import uuid
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import ensure_user_ownership, get_current_user
 from app.db.session import get_db
+from app.models.user import User
 from app.schemas.health_profile import (
     HealthProfileCreate,
     HealthProfileResponse,
@@ -24,7 +26,9 @@ router = APIRouter(prefix="/health-profiles", tags=["health-profiles"])
 def create_health_profile_endpoint(
     profile_in: HealthProfileCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> HealthProfileResponse:
+    ensure_user_ownership(current_user, profile_in.user_id)
     # 1. Verify user exists
     user = user_service.get_user_by_id(db, profile_in.user_id)
     if not user:
@@ -53,7 +57,9 @@ def create_health_profile_endpoint(
 def get_health_profile_by_user_endpoint(
     user_id: uuid.UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> HealthProfileResponse:
+    ensure_user_ownership(current_user, user_id)
     profile = health_profile_service.get_profile_by_user_id(db, user_id)
     if not profile:
         raise HTTPException(
@@ -73,7 +79,9 @@ def update_health_profile_endpoint(
     user_id: uuid.UUID,
     profile_in: HealthProfileUpdate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> HealthProfileResponse:
+    ensure_user_ownership(current_user, user_id)
     profile = health_profile_service.update_profile(db, user_id, profile_in)
     if not profile:
         raise HTTPException(
@@ -92,7 +100,9 @@ def update_health_profile_endpoint(
 def delete_health_profile_endpoint(
     user_id: uuid.UUID,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> dict:
+    ensure_user_ownership(current_user, user_id)
     success = health_profile_service.delete_profile(db, user_id)
     if not success:
         raise HTTPException(

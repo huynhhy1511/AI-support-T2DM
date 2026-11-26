@@ -302,4 +302,133 @@ def test_constraint_engine_vegetarian_allows_eggs_and_dairy():
     assert "Ức gà phi lê" not in filtered_vn_names
 
 
+def test_meal_composer_default_multiplier_without_targets():
+    """Verify serving_multiplier remains 1.0 when no energy or carb targets are provided."""
+    staple = _make_dummy_food("Gạo lứt", "staple", 35, 4, 1, fiber=3, gi=55, gl=19)
+    protein = _make_dummy_food("Đậu phụ hấp", "protein", 2, 10, 5, fiber=1)
+    veg = _make_dummy_food("Rau muống luộc", "vegetables", 4, 3, 0.5, fiber=3, gi=15)
+
+    items, meal_eval, safety_notes = MealComposer.compose(
+        candidate_foods=[staple, protein, veg],
+        meal_type="lunch",
+        custom_target=None,
+    )
+
+    assert len(items) == 3
+    for item in items:
+        assert item.serving_multiplier == 1.0
+        assert not any("Khẩu phần được điều chỉnh" in r for r in item.reasons)
+
+
+def test_meal_composer_scales_portion_with_target_energy():
+    """Verify serving_multiplier scales proportionally with target_energy_kcal and syncs all nutrients."""
+    # Base kcal: staple = 165, protein = 93, veg = 32.5 -> Total base kcal = 290.5
+    staple = _make_dummy_food("Gạo lứt", "staple", 35, 4, 1, fiber=3, gi=55, gl=19)
+    protein = _make_dummy_food("Đậu phụ hấp", "protein", 2, 10, 5, fiber=1)
+    veg = _make_dummy_food("Rau muống luộc", "vegetables", 4, 3, 0.5, fiber=3, gi=15)
+
+    target_kcal = 435.75  # 1.5x of 290.5
+    items, meal_eval, safety_notes = MealComposer.compose(
+        candidate_foods=[staple, protein, veg],
+        meal_type="lunch",
+        custom_target=NutritionTarget(target_energy_kcal=target_kcal),
+    )
+
+    assert len(items) == 3
+    for item in items:
+        assert item.serving_multiplier == 1.5
+        assert any("Khẩu phần được điều chỉnh x1.50" in r for r in item.reasons)
+
+    # Verify scaled totals match sum of scaled items
+    total_kcal = round(sum(i.energy_kcal for i in items), 2)
+    assert abs(total_kcal - target_kcal) < 0.5
+    # Verify GL scaled while GI stayed unchanged
+    staple_item = next(i for i in items if i.category == "staple")
+    assert staple_item.glycemic_index == 55.0
+    assert staple_item.glycemic_load == round(19.0 * 1.5, 2)
+
+
+def test_meal_composer_respects_target_carbohydrate_limit():
+    """Verify min(energy_ratio, carb_ratio) prioritizes glycemic control when carb target is strict."""
+    # Base kcal = 290.5, Base carb = 35 + 2 + 4 = 41g
+    staple = _make_dummy_food("Gạo lứt", "staple", 35, 4, 1, fiber=3, gi=55, gl=19)
+    protein = _make_dummy_food("Đậu phụ hấp", "protein", 2, 10, 5, fiber=1)
+    veg = _make_dummy_food("Rau muống luộc", "vegetables", 4, 3, 0.5, fiber=3, gi=15)
+
+    # High energy target (500 kcal -> ratio ~1.72) vs strict carb target (30g -> ratio ~0.73)
+    items, meal_eval, safety_notes = MealComposer.compose(
+        candidate_foods=[staple, protein, veg],
+        meal_type="lunch",
+        custom_target=NutritionTarget(
+            target_energy_kcal=500.0,
+            target_carbohydrate_g=30.0,
+        ),
+    )
+
+    assert len(items) == 3
+    expected_multiplier = round(30.0 / 41.0, 2)  # 0.73
+    for item in items:
+        assert item.serving_multiplier == expected_multiplier
+
+    total_carb = round(sum(i.carbohydrate_g for i in items), 2)
+    assert total_carb <= 30.5  # Within rounding tolerance of 30g
+
+
+def test_meal_composer_clamps_extreme_targets_with_warning():
+    """Verify extreme low/high targets clamp serving_multiplier to [0.5, 2.0] and emit clear warnings."""
+    staple = _make_dummy_food("Gạo lứt", "staple", 35, 4, 1, fiber=3, gi=55, gl=19)
+    protein = _make_dummy_food("Đậu phụ hấp", "protein", 2, 10, 5, fiber=1)
+    veg = _make_dummy_food("Rau muống luộc", "vegetables", 4, 3, 0.5, fiber=3, gi=15)
+
+    # Case 1: Extremely low target (50 kcal -> raw ~0.17, clamped to 0.5)
+    low_items, _, low_warnings = MealComposer.compose(
+        candidate_foods=[staple, protein, veg],
+        meal_type="lunch",
+        custom_target=NutritionTarget(target_energy_kcal=50.0),
+    )
+    assert all(i.serving_multiplier == 0.5 for i in low_items)
+    assert any("tối thiểu 0.5x" in w for w in low_warnings)
+
+    # Case 2: Extremely high target (2500 kcal -> raw ~8.6, clamped to 2.0)
+    high_items, _, high_warnings = MealComposer.compose(
+        candidate_foods=[staple, protein, veg],
+        meal_type="lunch",
+        custom_target=NutritionTarget(target_energy_kcal=2500.0),
+    )
+    assert all(i.serving_multiplier == 2.0 for i in high_items)
+    assert any("tối đa 2.0x" in w for w in high_warnings)
+
+
+def test_scoring_and_safety_notes_sodium_and_saturated_fat():
+    """Verify high sodium (>500mg) and high saturated fat (>5g) incur penalties and trigger cardiovascular safety notes (>700mg / >7g), while None is handled safely."""
+    staple = _make_dummy_food("Gạo lứt", "staple", 35, 4, 1, fiber=3, gi=55, gl=19)
+    staple.sodium_mg = 5.0
+    staple.saturated_fat_g = 0.3
+
+    salty_fatty_protein = _make_dummy_food("Thịt kho mặn", "protein", 2, 20, 18, fiber=0)
+    salty_fatty_protein.sodium_mg = 850.0  # > 500mg item & > 700mg meal
+    salty_fatty_protein.saturated_fat_g = 8.0  # > 5g item & > 7g meal
+
+    veg = _make_dummy_food("Bông cải xanh", "vegetables", 8, 3, 0.5, fiber=3.5, gi=15)
+    # Intentionally leave sodium_mg and saturated_fat_g as None on veg to test safe None handling
+
+    # 1. Verify item-level scoring penalties
+    score, reasons, _ = NutritionScoringEngine.score_item(salty_fatty_protein)
+    assert any("Natri cao" in r for r in reasons)
+    assert any("Chất béo bão hòa cao" in r for r in reasons)
+
+    # 2. Verify meal-level cardiovascular safety notes
+    items, _, safety_notes = MealComposer.compose(
+        candidate_foods=[staple, salty_fatty_protein, veg],
+        meal_type="lunch",
+    )
+    assert any("Cảnh báo tim mạch: Tổng lượng natri bữa ăn" in note for note in safety_notes)
+    assert any("Cảnh báo tim mạch: Tổng chất béo bão hòa" in note for note in safety_notes)
+    protein_item = next(i for i in items if i.food_name == "Thịt kho mặn")
+    assert protein_item.sodium_mg == 850.0
+    assert protein_item.saturated_fat_g == 8.0
+
+
+
+
 

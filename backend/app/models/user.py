@@ -33,6 +33,10 @@ class User(Base):
         String(255),
         nullable=True,
     )
+    password_hash: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+    )
     consent_accepted_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         nullable=True,

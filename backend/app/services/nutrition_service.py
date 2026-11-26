@@ -51,12 +51,12 @@ def generate_recommendation(
         custom_target=request.custom_target,
     )
 
-    # 5. Calculate total nutrients
-    tot_energy = round(sum(i.energy_kcal * i.serving_multiplier for i in items), 1)
-    tot_carb = round(sum(i.carbohydrate_g * i.serving_multiplier for i in items), 1)
-    tot_protein = round(sum(i.protein_g * i.serving_multiplier for i in items), 1)
-    tot_fat = round(sum(i.fat_g * i.serving_multiplier for i in items), 1)
-    tot_fiber = round(sum((i.fiber_g or 0) * i.serving_multiplier for i in items), 1)
+    # 5. Calculate total nutrients (items already contain scaled nutrients)
+    tot_energy = round(sum(i.energy_kcal for i in items), 2)
+    tot_carb = round(sum(i.carbohydrate_g for i in items), 2)
+    tot_protein = round(sum(i.protein_g for i in items), 2)
+    tot_fat = round(sum(i.fat_g for i in items), 2)
+    tot_fiber = round(sum((i.fiber_g or 0) for i in items), 2)
 
     rec_id = uuid.uuid4()
     algorithm_version = "v1.0-rule_scoring"
@@ -110,7 +110,7 @@ def generate_recommendation(
             calculated_fat_g=Decimal(str(item.fat_g)),
             calculated_fiber_g=Decimal(str(item.fiber_g or 0)),
             score=Decimal(str(item.score)),
-            reason="; ".join(item.reasons[:2]),
+            reason="; ".join(item.reasons),
         )
         db.add(rec_item)
 

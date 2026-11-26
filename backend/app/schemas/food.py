@@ -29,6 +29,8 @@ class FoodBase(BaseModel):
     sugar_g: Optional[Decimal] = Field(default=Decimal("0.00"), ge=0, decimal_places=2)
     glycemic_index: Optional[Decimal] = Field(None, ge=0, le=150, decimal_places=2)
     glycemic_load: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    sodium_mg: Optional[float] = Field(default=None, ge=0)
+    saturated_fat_g: Optional[float] = Field(default=None, ge=0)
     is_test_data: bool = False
     source_name: Optional[str] = Field(None, max_length=255)
     source_url: Optional[str] = Field(None, max_length=500)
@@ -50,6 +52,8 @@ class FoodUpdate(BaseModel):
     sugar_g: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
     glycemic_index: Optional[Decimal] = Field(None, ge=0, le=150, decimal_places=2)
     glycemic_load: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
+    sodium_mg: Optional[float] = Field(default=None, ge=0)
+    saturated_fat_g: Optional[float] = Field(default=None, ge=0)
     is_test_data: Optional[bool] = None
     source_name: Optional[str] = Field(None, max_length=255)
     source_url: Optional[str] = Field(None, max_length=500)
@@ -68,6 +72,8 @@ class FoodResponse(BaseModel):
     sugar_g: Optional[float] = 0.0
     glycemic_index: Optional[float] = None
     glycemic_load: Optional[float] = None
+    sodium_mg: Optional[float] = None
+    saturated_fat_g: Optional[float] = None
     is_test_data: bool
     source_name: Optional[str] = None
     source_url: Optional[str] = None

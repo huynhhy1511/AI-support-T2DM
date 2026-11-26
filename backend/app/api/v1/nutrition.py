@@ -4,7 +4,9 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import ensure_user_ownership, get_current_user
 from app.db.session import get_db
+from app.models.user import User
 from app.schemas.nutrition import (
     MealRecommendationRequest,
     MealRecommendationResponse,
@@ -28,7 +30,9 @@ router = APIRouter(prefix="/nutrition", tags=["nutrition"])
 def recommend_meal_endpoint(
     request: MealRecommendationRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> MealRecommendationResponse:
+    ensure_user_ownership(current_user, request.user_id)
     # 1. Verify user exists
     user = user_service.get_user_by_id(db, request.user_id)
     if not user:
@@ -51,7 +55,9 @@ def get_user_recommendations_endpoint(
     skip: int = Query(0, ge=0),
     limit: int = Query(20, ge=1, le=50),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> List[Dict[str, Any]]:
+    ensure_user_ownership(current_user, user_id)
     # Verify user exists
     user = user_service.get_user_by_id(db, user_id)
     if not user:
