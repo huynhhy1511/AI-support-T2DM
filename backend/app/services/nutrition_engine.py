@@ -235,6 +235,19 @@ class MealComposer:
         preference: Optional[str] = None,
         custom_target: Optional[NutritionTarget] = None,
     ) -> Tuple[List[RecommendedFoodItem], str, List[str]]:
+        # 0. Guard against empty candidate list (all foods filtered out by safety constraints)
+        if not candidate_foods:
+            meal_eval = (
+                "Không tìm thấy thực phẩm phù hợp với các ràng buộc an toàn và chế độ ăn của bạn. "
+                "Hệ thống không đề xuất thực đơn để đảm bảo an toàn, tránh vi phạm các yếu tố dị ứng hoặc kiêng khem đã khai báo."
+            )
+            safety_notes = [
+                "Cảnh báo an toàn: Toàn bộ thực phẩm đã bị loại bỏ do vi phạm các ràng buộc an toàn "
+                "(dị ứng thực phẩm, món kiêng khem hoặc chế độ ăn). "
+                "Hệ thống tuân thủ nguyên tắc an toàn y tế và tuyệt đối không tự động bỏ qua các ràng buộc an toàn."
+            ]
+            return [], meal_eval, safety_notes
+
         # 1. Score all candidates
         scored_items: List[Tuple[Food, float, List[str], Optional[str]]] = []
         for food in candidate_foods:
@@ -293,10 +306,20 @@ class MealComposer:
             if snack_candidates:
                 selected_foods.append(cls._to_recommended_item(snack_candidates[0]))
 
-        # Fallback if specific category was empty: pick top items
+        # Fallback if specific category was empty: pick top items from safe candidates
         if not selected_foods and scored_items:
             for item in scored_items[:2]:
                 selected_foods.append(cls._to_recommended_item(item))
+
+        if not selected_foods:
+            meal_eval = (
+                "Không tìm thấy thực phẩm phù hợp cho loại bữa ăn này theo các ràng buộc an toàn đã thiết lập. "
+                "Hệ thống không đề xuất thực đơn để đảm bảo an toàn."
+            )
+            safety_notes.append(
+                "Cảnh báo: Không có thực phẩm nào đạt điều kiện an toàn và cấu trúc cho loại bữa ăn này."
+            )
+            return [], meal_eval, safety_notes
 
         # 3. Calculate summary nutrients
         total_carb = sum(f.carbohydrate_g for f in selected_foods)

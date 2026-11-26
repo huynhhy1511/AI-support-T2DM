@@ -42,10 +42,6 @@ def generate_recommendation(
         health_profile=health_profile,
     )
 
-    if not candidates:
-        # If all candidates filtered out, provide helpful fallback without crashing
-        candidates = all_foods
-
     # 5. Compose balanced meal using Scoring Engine and Plate Method
     active_preference = (
         request.dietary_preference

@@ -142,3 +142,77 @@ def test_meal_composer_plate_method_and_safety_disclaimer():
     assert "Đĩa ăn" in meal_eval
     assert MealComposer.CLINICAL_DISCLAIMER is not None
 
+
+def test_allergy_exclusion_single_food():
+    """Verify that when a user is allergic to a specific food (e.g. tôm), that food is excluded while safe foods remain."""
+    shrimp = _make_dummy_food("Tôm hấp sả", "protein", 0, 24, 1)
+    fish = _make_dummy_food("Cá basa hấp", "protein", 0, 18, 5)
+    rice = _make_dummy_food("Gạo lứt", "staple", 35, 4, 1, fiber=3)
+
+    req = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="lunch",
+        excluded_keywords=["tôm"],
+    )
+
+    candidates = ConstraintEngine.filter_foods(
+        foods=[shrimp, fish, rice],
+        request=req,
+    )
+
+    assert len(candidates) == 2
+    names = [f.name for f in candidates]
+    assert "Tôm hấp sả" not in names
+    assert "Cá basa hấp" in names
+    assert "Gạo lứt" in names
+
+
+def test_all_foods_excluded_returns_empty_candidates():
+    """Verify that when all foods violate safety exclusions, ConstraintEngine returns an empty list without error."""
+    food1 = _make_dummy_food("Ức gà luộc", "protein", 0, 30, 2)
+    food2 = _make_dummy_food("Trứng luộc", "protein", 0, 12, 10)
+
+    req = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="lunch",
+        excluded_keywords=["gà", "trứng"],
+    )
+
+    candidates = ConstraintEngine.filter_foods(
+        foods=[food1, food2],
+        request=req,
+    )
+
+    assert candidates == []
+
+
+def test_meal_composer_no_candidates_no_unsafe_fallback():
+    """Verify that when candidate list is empty, MealComposer returns empty items and safe message, NEVER falling back."""
+    items, meal_eval, safety_notes = MealComposer.compose(
+        candidate_foods=[],
+        meal_type="lunch",
+    )
+
+    assert items == []
+    assert "Không tìm thấy thực phẩm phù hợp với các ràng buộc an toàn" in meal_eval
+    assert any("Cảnh báo an toàn" in n for n in safety_notes)
+
+
+def test_meal_composer_with_valid_foods_works_normally():
+    """Verify that when valid foods are present, MealComposer still creates a balanced plate normally."""
+    staple = _make_dummy_food("Gạo lứt", "staple", 35, 4, 1, fiber=3, gi=55, gl=19)
+    protein = _make_dummy_food("Đậu phụ hấp", "protein", 2, 10, 5, fiber=1)
+    veg = _make_dummy_food("Rau muống luộc", "vegetables", 4, 3, 0.5, fiber=3, gi=15)
+
+    items, meal_eval, safety_notes = MealComposer.compose(
+        candidate_foods=[staple, protein, veg],
+        meal_type="lunch",
+    )
+
+    assert len(items) == 3
+    assert any(i.category == "staple" for i in items)
+    assert any(i.category == "protein" for i in items)
+    assert any(i.category == "vegetables" for i in items)
+    assert "Đĩa ăn" in meal_eval
+
+

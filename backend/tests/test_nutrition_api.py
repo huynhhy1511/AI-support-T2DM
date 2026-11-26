@@ -93,3 +93,71 @@ def test_recommendation_invalid_meal_type():
     )
     assert res.status_code == 422
 
+
+def test_recommendation_all_foods_excluded_no_unsafe_fallback():
+    """Verify that when all foods are excluded (e.g. severe allergies/restrictions), system returns empty items, NEVER falling back to all foods."""
+    test_email = f"no_fallback_{uuid.uuid4().hex[:8]}@example.com"
+    user_res = client.post(
+        "/api/v1/users",
+        json={"email": test_email, "display_name": "Allergy Patient"},
+    )
+    assert user_res.status_code == 201
+    user_id = user_res.json()["id"]
+
+    try:
+        # Exclude all 14 sample foods in DB by keywords
+        all_food_keywords = [
+            "gạo", "yến mạch", "khoai", "cơm", "ức gà", "cá hồi",
+            "đậu phụ", "trứng", "bông cải", "rau muống", "dưa chuột",
+            "táo", "sữa chua", "hạnh nhân"
+        ]
+        res = client.post(
+            "/api/v1/nutrition/recommend",
+            json={
+                "user_id": user_id,
+                "meal_type": "lunch",
+                "excluded_keywords": all_food_keywords,
+            },
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["items"] == []
+        assert data["total_energy_kcal"] == 0.0
+        assert data["total_carbohydrate_g"] == 0.0
+        assert "Không tìm thấy thực phẩm phù hợp với các ràng buộc an toàn" in data["meal_balance_evaluation"]
+        assert any("Cảnh báo an toàn" in note for note in data["safety_notes"])
+
+    finally:
+        client.delete(f"/api/v1/users/{user_id}")
+
+
+def test_recommendation_user_allergy_specific_food():
+    """Verify that when user specifies an allergy keyword (e.g. ức gà), that food is never recommended while safe foods are."""
+    test_email = f"allergy_{uuid.uuid4().hex[:8]}@example.com"
+    user_res = client.post(
+        "/api/v1/users",
+        json={"email": test_email, "display_name": "Chicken Allergy Patient"},
+    )
+    assert user_res.status_code == 201
+    user_id = user_res.json()["id"]
+
+    try:
+        res = client.post(
+            "/api/v1/nutrition/recommend",
+            json={
+                "user_id": user_id,
+                "meal_type": "lunch",
+                "excluded_keywords": ["ức gà", "chicken"],
+            },
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["items"]) >= 2
+        for item in data["items"]:
+            name_lower = item["food_name"].lower()
+            assert "ức gà" not in name_lower
+            assert "chicken" not in name_lower
+
+    finally:
+        client.delete(f"/api/v1/users/{user_id}")
+
