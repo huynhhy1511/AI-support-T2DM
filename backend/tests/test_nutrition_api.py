@@ -213,3 +213,44 @@ def test_recommendation_does_not_auto_seed_when_db_empty():
     assert mock_db.query(Food).count() == 0
 
 
+def test_recommendation_dynamic_portion_api_and_persistence():
+    """Verify API scales portion dynamically for custom_target and total nutrients match scaled items."""
+    test_email = f"portion_{uuid.uuid4().hex[:8]}@example.com"
+    user_res = client.post(
+        "/api/v1/users",
+        json={"email": test_email, "display_name": "Portion Patient"},
+    )
+    assert user_res.status_code == 201
+    user_id = user_res.json()["id"]
+
+    try:
+        res = client.post(
+            "/api/v1/nutrition/recommend",
+            json={
+                "user_id": user_id,
+                "meal_type": "lunch",
+                "custom_target": {
+                    "target_energy_kcal": 600.0,
+                    "target_carbohydrate_g": 45.0,
+                },
+            },
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert len(data["items"]) >= 2
+
+        # Verify total_energy_kcal matches sum of item energy_kcal (no double multiplication)
+        sum_item_kcal = round(sum(i["energy_kcal"] for i in data["items"]), 2)
+        assert abs(data["total_energy_kcal"] - sum_item_kcal) < 0.05
+
+        sum_item_carb = round(sum(i["carbohydrate_g"] for i in data["items"]), 2)
+        assert abs(data["total_carbohydrate_g"] - sum_item_carb) < 0.05
+
+        # Multiplier must be within [0.5, 2.0]
+        for item in data["items"]:
+            assert 0.5 <= item["serving_multiplier"] <= 2.0
+    finally:
+        client.delete(f"/api/v1/users/{user_id}")
+
+
+

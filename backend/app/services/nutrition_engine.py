@@ -330,7 +330,7 @@ class MealComposer:
         # Sort items descending by score
         scored_items.sort(key=lambda x: x[1], reverse=True)
 
-        selected_foods: List[RecommendedFoodItem] = []
+        selected_tuples: List[Tuple[Food, float, List[str], Optional[str]]] = []
         safety_notes: List[str] = []
 
         # 2. Structure composition based on meal_type
@@ -341,13 +341,13 @@ class MealComposer:
             vegetables = [item for item in scored_items if item[0].category == "vegetables"]
 
             if staples:
-                selected_foods.append(cls._to_recommended_item(staples[0]))
+                selected_tuples.append(staples[0])
             if proteins:
-                selected_foods.append(cls._to_recommended_item(proteins[0]))
+                selected_tuples.append(proteins[0])
             if vegetables:
-                selected_foods.append(cls._to_recommended_item(vegetables[0]))
+                selected_tuples.append(vegetables[0])
                 if len(vegetables) > 1:
-                    selected_foods.append(cls._to_recommended_item(vegetables[1]))
+                    selected_tuples.append(vegetables[1])
 
         elif meal_type == "breakfast":
             # Breakfast: 1 staple/dairy + 1 protein or light fruit
@@ -361,9 +361,9 @@ class MealComposer:
             for item in breakfast_candidates:
                 cat = item[0].category
                 if cat not in categories_seen:
-                    selected_foods.append(cls._to_recommended_item(item))
+                    selected_tuples.append(item)
                     categories_seen.add(cat)
-                if len(selected_foods) >= 2:
+                if len(selected_tuples) >= 2:
                     break
 
         elif meal_type == "snack":
@@ -375,14 +375,14 @@ class MealComposer:
                 or float(item[0].carbohydrate_g) <= 20.0
             ]
             if snack_candidates:
-                selected_foods.append(cls._to_recommended_item(snack_candidates[0]))
+                selected_tuples.append(snack_candidates[0])
 
         # Fallback if specific category was empty: pick top items from safe candidates
-        if not selected_foods and scored_items:
+        if not selected_tuples and scored_items:
             for item in scored_items[:2]:
-                selected_foods.append(cls._to_recommended_item(item))
+                selected_tuples.append(item)
 
-        if not selected_foods:
+        if not selected_tuples:
             meal_eval = (
                 "Không tìm thấy thực phẩm phù hợp cho loại bữa ăn này theo các ràng buộc an toàn đã thiết lập. "
                 "Hệ thống không đề xuất thực đơn để đảm bảo an toàn."
@@ -392,9 +392,23 @@ class MealComposer:
             )
             return [], meal_eval, safety_notes
 
-        # 3. Calculate summary nutrients
-        total_carb = sum(f.carbohydrate_g for f in selected_foods)
-        total_fiber = sum(f.fiber_g or 0 for f in selected_foods)
+        # 2b. Compute dynamic serving multiplier based on target_energy_kcal / target_carbohydrate_g
+        final_multiplier, clamp_warnings = cls._calculate_serving_multiplier(
+            selected_tuples=selected_tuples,
+            custom_target=custom_target,
+        )
+        safety_notes.extend(clamp_warnings)
+
+        selected_foods: List[RecommendedFoodItem] = [
+            cls._to_recommended_item(item_tuple, multiplier=final_multiplier)
+            for item_tuple in selected_tuples
+        ]
+
+        # 3. Calculate summary nutrients (already scaled by multiplier)
+        total_energy = round(sum(f.energy_kcal for f in selected_foods), 2)
+        total_carb = round(sum(f.carbohydrate_g for f in selected_foods), 2)
+        total_protein = round(sum(f.protein_g for f in selected_foods), 2)
+        total_fiber = round(sum(f.fiber_g or 0 for f in selected_foods), 2)
 
         # 4. Safety evaluation on Carbohydrates
         max_carb_allowed = 55.0  # Default safe upper bound for main meals (ADA recommendation)
@@ -416,34 +430,93 @@ class MealComposer:
 
         meal_eval = (
             f"Bữa ăn cấu trúc theo nguyên tắc Đĩa ăn cho bệnh nhân đái tháo đường: "
-            f"Tổng năng lượng {sum(f.energy_kcal for f in selected_foods):.0f} kcal, "
-            f"Carbohydrate {total_carb:.1f}g, Đạm {sum(f.protein_g for f in selected_foods):.1f}g, "
+            f"Tổng năng lượng {total_energy:.0f} kcal, "
+            f"Carbohydrate {total_carb:.1f}g, Đạm {total_protein:.1f}g, "
             f"Chất xơ {total_fiber:.1f}g. Giữ ổn định chỉ số đường huyết sau bữa ăn."
         )
 
         return selected_foods, meal_eval, safety_notes
 
     @staticmethod
+    def _calculate_serving_multiplier(
+        selected_tuples: List[Tuple[Food, float, List[str], Optional[str]]],
+        custom_target: Optional[NutritionTarget],
+    ) -> Tuple[float, List[str]]:
+        """
+        Calculate a safe serving multiplier in [0.5, 2.0] based on target_energy_kcal and target_carbohydrate_g.
+        Prioritizes glycemic control by taking min(energy_ratio, carb_ratio) when both targets are specified.
+        """
+        if not custom_target or (
+            custom_target.target_energy_kcal is None
+            and custom_target.target_carbohydrate_g is None
+        ):
+            return 1.0, []
+
+        base_kcal = sum(float(t[0].energy_kcal) for t in selected_tuples)
+        base_carb = sum(float(t[0].carbohydrate_g) for t in selected_tuples)
+
+        ratios: List[float] = []
+        if custom_target.target_energy_kcal is not None and base_kcal > 0:
+            ratios.append(custom_target.target_energy_kcal / base_kcal)
+        if custom_target.target_carbohydrate_g is not None and base_carb > 0:
+            ratios.append(custom_target.target_carbohydrate_g / base_carb)
+
+        if not ratios:
+            return 1.0, []
+
+        # Glycemic control priority: take the stricter (smaller) ratio
+        raw_multiplier = min(ratios)
+        warnings: List[str] = []
+
+        if raw_multiplier < 0.5:
+            clamped = 0.5
+            warnings.append(
+                "Cảnh báo khẩu phần: Mục tiêu năng lượng/carbohydrate quá thấp so với khẩu phần tối thiểu an toàn. "
+                "Hệ thống đã giữ mức khẩu phần tối thiểu 0.5x để tránh thiếu hụt dinh dưỡng."
+            )
+        elif raw_multiplier > 2.0:
+            clamped = 2.0
+            warnings.append(
+                "Cảnh báo khẩu phần: Mục tiêu năng lượng/carbohydrate quá cao cho một bữa ăn. "
+                "Hệ thống đã giới hạn mức khẩu phần tối đa 2.0x để tránh quá tải chuyển hóa và tăng đường huyết sau ăn."
+            )
+        else:
+            clamped = raw_multiplier
+
+        return round(clamped, 2), warnings
+
+    @staticmethod
     def _to_recommended_item(
-        item_tuple: Tuple[Food, float, List[str], Optional[str]]
+        item_tuple: Tuple[Food, float, List[str], Optional[str]],
+        multiplier: float = 1.0,
     ) -> RecommendedFoodItem:
         food, score, reasons, warning = item_tuple
+        item_reasons = list(reasons)
+        if multiplier != 1.0:
+            item_reasons.append(
+                f"Khẩu phần được điều chỉnh x{multiplier:.2f} theo mục tiêu năng lượng/carbohydrate"
+            )
+
         return RecommendedFoodItem(
             food_id=food.id,
             food_name=food.name,
             category=food.category,
             serving_size_g=float(food.serving_size_g),
-            serving_multiplier=1.0,
-            energy_kcal=float(food.energy_kcal),
-            carbohydrate_g=float(food.carbohydrate_g),
-            protein_g=float(food.protein_g),
-            fat_g=float(food.fat_g),
-            fiber_g=float(food.fiber_g or 0),
-            sugar_g=float(food.sugar_g or 0),
+            serving_multiplier=multiplier,
+            energy_kcal=round(float(food.energy_kcal) * multiplier, 2),
+            carbohydrate_g=round(float(food.carbohydrate_g) * multiplier, 2),
+            protein_g=round(float(food.protein_g) * multiplier, 2),
+            fat_g=round(float(food.fat_g) * multiplier, 2),
+            fiber_g=round(float(food.fiber_g or 0) * multiplier, 2),
+            sugar_g=round(float(food.sugar_g or 0) * multiplier, 2),
             glycemic_index=float(food.glycemic_index) if food.glycemic_index is not None else None,
-            glycemic_load=float(food.glycemic_load) if food.glycemic_load is not None else None,
+            glycemic_load=(
+                round(float(food.glycemic_load) * multiplier, 2)
+                if food.glycemic_load is not None
+                else None
+            ),
             score=score,
-            reasons=reasons,
+            reasons=item_reasons,
             item_warning=warning,
         )
 
