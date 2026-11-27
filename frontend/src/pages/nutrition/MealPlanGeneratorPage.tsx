@@ -10,11 +10,14 @@ import { StatusBadge } from '../../components/ui/Badges';
 import { PageHeader } from '../../components/ui/NavigationUI';
 import {
   healthProfileApi,
-  localPrefsAdapter,
-  mealPlanStorage,
   nutritionBackendApi,
 } from '../../services/nutritionApi';
-import type { DailyMealPlan, HealthProfile, MealType } from '../../types/nutrition';
+import type {
+  HealthProfile,
+  HealthProfileCompleteness,
+  MealType,
+  NutritionGoalType,
+} from '../../types/nutrition';
 
 const MEAL_OPTIONS: Array<{ value: MealType; label: string }> = [
   { value: 'breakfast', label: 'Bữa sáng' },
@@ -22,6 +25,14 @@ const MEAL_OPTIONS: Array<{ value: MealType; label: string }> = [
   { value: 'dinner', label: 'Bữa tối' },
   { value: 'snack', label: 'Bữa phụ' },
 ];
+
+const MISSING_FIELD_LABELS: Record<string, string> = {
+  date_of_birth: 'Ngày sinh',
+  sex: 'Giới tính',
+  height_cm: 'Chiều cao',
+  weight_kg: 'Cân nặng',
+  activity_level: 'Mức vận động',
+};
 
 function todayStr(): string {
   const d = new Date();
@@ -33,38 +44,50 @@ export function MealPlanGeneratorPage() {
   const navigate = useNavigate();
 
   const [profile, setProfile] = useState<HealthProfile | null>(null);
+  const [completeness, setCompleteness] = useState<HealthProfileCompleteness | null>(null);
   const [date, setDate] = useState(todayStr());
   const [diet, setDiet] = useState('normal');
-  const [goal, setGoal] = useState<'weight_loss' | 'maintenance'>('maintenance');
+  const [goal, setGoal] = useState<NutritionGoalType>('maintenance');
   const [extraExcluded, setExtraExcluded] = useState('');
   const [selectedMeals, setSelectedMeals] = useState<MealType[]>(['breakfast', 'lunch', 'dinner', 'snack']);
 
   const [generating, setGenerating] = useState(false);
   const [statusMsg, setStatusMsg] = useState<string | null>(null);
-  const [abstentionError, setAbstentionError] = useState<string | null>(null);
+  const [abstentionError, setAbstentionError] = useState<{
+    reasonCode?: string | null;
+    message: string;
+    notes?: string[];
+    isCritical?: boolean;
+  } | null>(null);
 
   useEffect(() => {
     if (!user) return;
-    const prefs = localPrefsAdapter.get(user.id);
-    setGoal(prefs.nutrition_goal);
-    healthProfileApi
-      .getByUser(user.id)
-      .then((hp) => {
-        setProfile(hp);
-        if (hp.dietary_preference) setDiet(hp.dietary_preference);
-      })
-      .catch(() => setProfile(null));
+    let active = true;
+    Promise.all([
+      healthProfileApi.getMe().catch(() => null),
+      healthProfileApi.getCompleteness().catch(() => null),
+    ]).then(([hp, comp]) => {
+      if (!active) return;
+      setProfile(hp);
+      setCompleteness(comp);
+      if (hp?.dietary_preference) setDiet(hp.dietary_preference);
+      if (hp?.nutrition_goal) setGoal(hp.nutrition_goal);
+    });
+    return () => {
+      active = false;
+    };
   }, [user]);
 
   if (!user) return null;
-  const prefs = localPrefsAdapter.get(user.id);
-  const hasCKD = prefs.comorbidities.some((c) => c.toLowerCase().includes('ckd'));
-  const missingFields: string[] = [];
-  if (!profile?.date_of_birth) missingFields.push('Ngày sinh');
-  if (!profile?.sex) missingFields.push('Giới tính');
-  if (!profile?.height_cm) missingFields.push('Chiều cao');
-  if (!profile?.weight_kg) missingFields.push('Cân nặng');
-  if (!profile?.activity_level) missingFields.push('Mức vận động');
+
+  const profileAllergies = profile?.allergies ?? [];
+  const profileComorbidities = profile?.comorbidities ?? [];
+  const hasCKD = profileComorbidities.some(
+    (c) => c.toLowerCase().includes('ckd') || c.toLowerCase().includes('bệnh thận')
+  );
+  const missingFields = (completeness?.missing_fields ?? []).map(
+    (f) => MISSING_FIELD_LABELS[f] ?? f
+  );
 
   const toggleMeal = (m: MealType) => {
     setSelectedMeals((prev) =>
@@ -77,66 +100,57 @@ export function MealPlanGeneratorPage() {
     setAbstentionError(null);
     setStatusMsg(null);
 
-    // Kiểm tra an toàn CKD: không tự ý tạo thực đơn khi có bệnh thận mạn
-    if (hasCKD) {
-      setAbstentionError(
-        'Hồ sơ có ghi nhận bệnh thận mạn (CKD). Hệ thống không tự động tạo thực đơn vì cần kiểm soát chặt chẽ protein, kali, photpho và natri bởi bác sĩ chuyên khoa thận/dinh dưỡng.'
-      );
-      return;
-    }
-
     if (selectedMeals.length === 0) {
-      setAbstentionError('Vui lòng chọn ít nhất 1 bữa ăn để tạo thực đơn.');
+      setAbstentionError({
+        message: 'Vui lòng chọn ít nhất 1 bữa ăn để tạo thực đơn.',
+      });
       return;
     }
 
     setGenerating(true);
-    setStatusMsg('Đang kiểm tra ràng buộc và gọi Nutrition Recommendation Engine...');
+    setStatusMsg('Đang kiểm tra ràng buộc an toàn và gọi Nutrition Recommendation Engine trên máy chủ...');
 
     try {
-      const excludedKeywords = [
-        ...prefs.allergies,
-        ...extraExcluded
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean),
-      ];
+      const extraKeywords = extraExcluded
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean);
 
-      const mealsResult: DailyMealPlan['meals'] = {};
+      const hasHypertension = profileComorbidities.some(
+        (c) => c.toLowerCase().includes('hypertension') || c.toLowerCase().includes('tăng huyết áp')
+      );
       const activePref =
-        diet !== 'normal'
-          ? diet
-          : prefs.comorbidities.some((c) => c.toLowerCase().includes('hypertension'))
-            ? 'low_sodium'
-            : null;
+        diet !== 'normal' ? diet : hasHypertension ? 'low_sodium' : null;
 
       for (const mtype of selectedMeals) {
         const res = await nutritionBackendApi.recommendMeal({
           user_id: user.id,
           meal_type: mtype,
           dietary_preference: activePref,
-          excluded_keywords: excludedKeywords.length > 0 ? excludedKeywords : null,
+          excluded_allergens: profileAllergies.length > 0 ? profileAllergies : null,
+          excluded_keywords: extraKeywords.length > 0 ? extraKeywords : null,
         });
-        mealsResult[mtype] = res;
+
+        // Xử lý trực tiếp từ chối có chủ đích (HTTP 200 status="abstained") từ Backend Safety Guard
+        if (res.status === 'abstained') {
+          setAbstentionError({
+            reasonCode: res.reason_code,
+            message: res.meal_balance_evaluation,
+            notes: res.safety_notes,
+            isCritical: res.reason_code === 'CKD_SPECIALIST_REQUIRED',
+          });
+          return;
+        }
       }
 
-      const plan: DailyMealPlan = {
-        date,
-        generated_at: new Date().toISOString(),
-        meals: mealsResult,
-        status: 'active',
-        applied_preference: activePref || 'Cân bằng ĐTĐ',
-        applied_goal: goal,
-        missing_fields: missingFields,
-      };
-      mealPlanStorage.save(user.id, plan);
-      navigate('/nutrition/daily');
+      navigate(`/nutrition/daily?date=${encodeURIComponent(date)}`);
     } catch (err) {
-      setAbstentionError(
-        err instanceof Error
-          ? err.message
-          : 'Không thể tạo thực đơn đáp ứng các ràng buộc hiện tại.'
-      );
+      setAbstentionError({
+        message:
+          err instanceof Error
+            ? err.message
+            : 'Không thể tạo thực đơn đáp ứng các ràng buộc hiện tại.',
+      });
     } finally {
       setGenerating(false);
       setStatusMsg(null);
@@ -158,8 +172,12 @@ export function MealPlanGeneratorPage() {
 
       {abstentionError && (
         <WarningCard
-          level={hasCKD ? 'critical' : 'error'}
-          title="Engine tạm dừng / từ chối tạo thực đơn"
+          level={abstentionError.isCritical ? 'critical' : 'error'}
+          title={
+            abstentionError.reasonCode
+              ? `Engine tạm dừng tạo thực đơn (${abstentionError.reasonCode})`
+              : 'Engine tạm dừng / từ chối tạo thực đơn'
+          }
           action={
             <div style={{ display: 'flex', gap: 8 }}>
               <SecondaryButton size="sm" onClick={() => navigate('/nutrition/safety')}>
@@ -171,7 +189,14 @@ export function MealPlanGeneratorPage() {
             </div>
           }
         >
-          {abstentionError}
+          <p>{abstentionError.message}</p>
+          {abstentionError.notes && abstentionError.notes.length > 0 && (
+            <ul style={{ margin: '8px 0 0', paddingLeft: 18 }}>
+              {abstentionError.notes.map((n, idx) => (
+                <li key={idx}>{n}</li>
+              ))}
+            </ul>
+          )}
         </WarningCard>
       )}
 
@@ -206,7 +231,7 @@ export function MealPlanGeneratorPage() {
             <select
               className="dc-select"
               value={goal}
-              onChange={(e) => setGoal(e.target.value as 'weight_loss' | 'maintenance')}
+              onChange={(e) => setGoal(e.target.value as NutritionGoalType)}
               disabled={generating}
             >
               <option value="maintenance">Ổn định đường huyết & duy trì cân nặng</option>
@@ -276,32 +301,40 @@ export function MealPlanGeneratorPage() {
         <aside className="dc-card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
             <h2 style={{ fontSize: 16 }}>Tóm tắt hồ sơ áp dụng</h2>
-            <StatusBadge tone={missingFields.length === 0 ? 'success' : 'warning'}>
-              {missingFields.length === 0 ? 'Đủ thông tin' : `Thiếu ${missingFields.length} trường`}
+            <StatusBadge tone={completeness?.is_complete ? 'success' : 'warning'}>
+              {completeness?.is_complete ? 'Đủ thông tin' : `Thiếu ${missingFields.length} trường`}
             </StatusBadge>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13.5 }}>
             <div>Ngày sinh: <strong>{profile?.date_of_birth || 'Chưa có'}</strong></div>
             <div>Giới tính: <strong>{profile?.sex || 'Chưa có'}</strong></div>
-            <div>Chiều cao: <strong>{profile?.height_cm ? `${profile.height_cm} cm` : 'Chưa có'}</strong></div>
-            <div>Cân nặng: <strong>{profile?.weight_kg ? `${profile.weight_kg} kg` : 'Chưa có'}</strong></div>
+            <div>Chiều cao: <strong>{profile?.height_cm != null ? `${profile.height_cm} cm` : 'Chưa có'}</strong></div>
+            <div>Cân nặng: <strong>{profile?.weight_kg != null ? `${profile.weight_kg} kg` : 'Chưa có'}</strong></div>
             <div>Mức vận động: <strong>{profile?.activity_level || 'Chưa có'}</strong></div>
+            <div>
+              Mục tiêu năng lượng:{' '}
+              <strong>
+                {profile?.target_energy_kcal != null
+                  ? `${Math.round(profile.target_energy_kcal)} kcal/ngày`
+                  : 'Chưa tính được'}
+              </strong>
+            </div>
             <div>Mục tiêu: <strong>{goal === 'weight_loss' ? 'Giảm cân' : 'Duy trì'}</strong></div>
             <div>Chế độ ăn: <strong>{diet}</strong></div>
             <div>
               Dị ứng:{' '}
-              <strong>{prefs.allergies.length > 0 ? prefs.allergies.join(', ') : 'Không'}</strong>
+              <strong>{profileAllergies.length > 0 ? profileAllergies.join(', ') : 'Không'}</strong>
             </div>
             <div>
               Bệnh lý:{' '}
-              <strong>{prefs.comorbidities.join(', ')}</strong>
+              <strong>{profileComorbidities.length > 0 ? profileComorbidities.join(', ') : 'Đái tháo đường Type 2'}</strong>
             </div>
           </div>
 
           {hasCKD && (
             <WarningCard level="critical" title="Giới hạn bệnh thận (CKD)">
-              Không thể tạo thực đơn tự động khi có CKD.
+              Hồ sơ ghi nhận CKD — Backend Safety Guard sẽ tạm dừng tự động sinh thực đơn để đảm bảo an toàn chuyên khoa.
             </WarningCard>
           )}
 

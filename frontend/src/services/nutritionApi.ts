@@ -1,8 +1,12 @@
 import { getStoredToken } from './api';
 import type {
   DailyMealPlan,
+  DailyRecommendationsResponse,
+  FoodAlternativeItem,
   FoodItem,
+  FoodSubstitutionRequest,
   HealthProfile,
+  HealthProfileCompleteness,
   HealthProfilePayload,
   LocalClinicalPreferences,
   MealDiaryEntry,
@@ -11,6 +15,7 @@ import type {
   MealType,
   RagReferenceItem,
   RecommendedFoodItem,
+  SafetyAlertsResponse,
   WeightLogEntry,
 } from '../types/nutrition';
 
@@ -42,10 +47,22 @@ async function apiRequest<T>(endpoint: string, options: RequestInit = {}): Promi
 }
 
 /* ==========================================================================
-   1. REAL BACKEND API ADAPTERS (Kết nối trực tiếp FastAPI trên nhánh main)
+   1. REAL BACKEND API ADAPTERS (Kết nối trực tiếp FastAPI mốc Migration 006)
    ========================================================================== */
 
 export const healthProfileApi = {
+  getMe(): Promise<HealthProfile> {
+    return apiRequest<HealthProfile>('/health-profiles/me');
+  },
+  upsertMe(payload: HealthProfilePayload): Promise<HealthProfile> {
+    return apiRequest<HealthProfile>('/health-profiles/me', {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    });
+  },
+  getCompleteness(): Promise<HealthProfileCompleteness> {
+    return apiRequest<HealthProfileCompleteness>('/health-profiles/me/completeness');
+  },
   getByUser(userId: string): Promise<HealthProfile> {
     return apiRequest<HealthProfile>(`/health-profiles/user/${userId}`);
   },
@@ -74,6 +91,16 @@ export const foodsApi = {
   getById(foodId: string): Promise<FoodItem> {
     return apiRequest<FoodItem>(`/foods/${foodId}`);
   },
+  getAlternatives(
+    foodId: string,
+    params?: { limit?: number; dietary_preference?: string | null }
+  ): Promise<FoodAlternativeItem[]> {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.dietary_preference) qs.set('dietary_preference', params.dietary_preference);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return apiRequest<FoodAlternativeItem[]>(`/foods/${foodId}/alternatives${suffix}`);
+  },
 };
 
 export const nutritionBackendApi = {
@@ -82,6 +109,25 @@ export const nutritionBackendApi = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+  getToday(targetDate?: string): Promise<DailyRecommendationsResponse> {
+    const suffix = targetDate ? `?target_date=${encodeURIComponent(targetDate)}` : '';
+    return apiRequest<DailyRecommendationsResponse>(`/nutrition/recommendations/today${suffix}`);
+  },
+  substituteFood(
+    recommendationId: string,
+    payload: FoodSubstitutionRequest
+  ): Promise<MealRecommendationResponse> {
+    return apiRequest<MealRecommendationResponse>(
+      `/nutrition/recommendations/${recommendationId}/substitutions`,
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    );
+  },
+  getSafetyAlerts(): Promise<SafetyAlertsResponse> {
+    return apiRequest<SafetyAlertsResponse>('/nutrition/safety-alerts');
   },
   getHistory(userId: string, limit = 20): Promise<Array<{
     id: string;
@@ -95,8 +141,8 @@ export const nutritionBackendApi = {
 };
 
 /* ==========================================================================
-   2. LOCALSTORAGE ADAPTERS CHO CÁC PHẦN CHƯA CÓ ENDPOINT RIÊNG TRÊN MAIN
-   (Nhật ký ăn uống, sở thích lâm sàng mở rộng, kế hoạch theo ngày, lịch sử cân nặng)
+   2. LOCALSTORAGE ADAPTERS TẠM CHO CÁC MÀN HÌNH SẼ CHUYỂN Ở ĐỢT 7B
+   (FoodDiaryPage, NutritionProgressPage, AIExplanationPage)
    ========================================================================== */
 
 const keyFor = (prefix: string, userId: string) => `dc_${prefix}_${userId}`;
@@ -177,21 +223,28 @@ export const weightHistoryStorage = {
   },
 };
 
-/** Tính tổng natri cho một bữa ăn (từ các món có sodium_mg xác thực) */
+/**
+ * Tính tổng natri cho một bữa ăn.
+ * Lưu ý: `sodium_mg` trả về từ Backend trong RecommendedFoodItem ĐÃ được nhân sẵn `serving_multiplier`,
+ * nên KHÔNG nhân `serving_multiplier` thêm lần 2.
+ */
 export function sumMealSodium(items: RecommendedFoodItem[]): number {
   return Math.round(
-    items.reduce((acc, it) => acc + (it.sodium_mg ?? 0) * it.serving_multiplier, 0)
+    items.reduce((acc, it) => acc + (it.sodium_mg ?? 0), 0)
   );
 }
 
 /**
- * Tính nhu cầu năng lượng tham khảo hiển thị (khi backend chưa trả về target_kcal trực tiếp).
- * Frontend KHÔNG ghi đè số liệu dinh dưỡng của từng món từ backend.
+ * Ưu tiên dùng target_energy_kcal tính từ Backend (EnergyCalculator).
+ * Giữ lại hàm tham khảo cho AIExplanationPage trước khi chuyển hoàn toàn ở Đợt 7B.
  */
 export function estimateReferenceDailyKcal(
   profile: HealthProfile | null,
-  goal: 'weight_loss' | 'maintenance'
+  goal?: 'weight_loss' | 'maintenance'
 ): number | null {
+  if (profile?.target_energy_kcal != null) {
+    return Math.round(profile.target_energy_kcal);
+  }
   if (
     !profile ||
     !profile.date_of_birth ||
@@ -226,7 +279,8 @@ export function estimateReferenceDailyKcal(
   };
   const tdee = bmr * (factors[profile.activity_level] ?? 1.2);
   const floor = profile.sex === 'male' ? 1400 : 1200;
-  if (goal === 'weight_loss') {
+  const effectiveGoal = goal ?? profile.nutrition_goal ?? 'maintenance';
+  if (effectiveGoal === 'weight_loss') {
     return Math.round(Math.max(floor, tdee - 400));
   }
   return Math.round(Math.max(floor, tdee));
@@ -234,7 +288,6 @@ export function estimateReferenceDailyKcal(
 
 /**
  * Mock/Adapter cho nguồn trích dẫn RAG (dùng khi nhánh main chưa ghép endpoint /nutrition/explain).
- * Các nguồn trích dẫn tuân thủ đúng danh mục nguồn đã xác minh (ADA 2024, Bộ Y tế QĐ 5481/QĐ-BYT, WHO 2020).
  */
 export const VERIFIED_RAG_REFERENCES: RagReferenceItem[] = [
   {

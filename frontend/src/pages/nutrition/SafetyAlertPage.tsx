@@ -3,15 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { AppLayout } from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { PrimaryButton, SecondaryButton } from '../../components/ui/Buttons';
-import { WarningCard } from '../../components/ui/Cards';
+import { StatCard, WarningCard } from '../../components/ui/Cards';
 import { StatusBadge } from '../../components/ui/Badges';
+import { LoadingSkeleton } from '../../components/ui/Feedback';
 import { PageHeader } from '../../components/ui/NavigationUI';
-import {
-  estimateReferenceDailyKcal,
-  healthProfileApi,
-  localPrefsAdapter,
-} from '../../services/nutritionApi';
-import type { HealthProfile, SafetyAlertItem } from '../../types/nutrition';
+import { nutritionBackendApi } from '../../services/nutritionApi';
+import type { SafetyAlertItem, SafetyAlertsResponse } from '../../types/nutrition';
 
 const SAMPLE_SCENARIOS: SafetyAlertItem[] = [
   {
@@ -73,32 +70,45 @@ const SAMPLE_SCENARIOS: SafetyAlertItem[] = [
   },
 ];
 
+function routeForAlertCode(code: string): { label: string; route: string } {
+  if (code === 'MISSING_PROFILE_FIELDS' || code === 'CKD_SPECIALIST_REQUIRED' || code.startsWith('BMI_')) {
+    return { label: 'Cập nhật hồ sơ', route: '/nutrition/profile' };
+  }
+  return { label: 'Mở trang Tạo thực đơn', route: '/nutrition/generate' };
+}
+
 export function SafetyAlertPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const [profile, setProfile] = useState<HealthProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [safetyData, setSafetyData] = useState<SafetyAlertsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!user) return;
-    healthProfileApi.getByUser(user.id).then(setProfile).catch(() => setProfile(null));
+    let active = true;
+    setLoading(true);
+    nutritionBackendApi
+      .getSafetyAlerts()
+      .then((res) => {
+        if (active) setSafetyData(res);
+      })
+      .catch((err) => {
+        if (active) {
+          setError(err instanceof Error ? err.message : 'Không thể tải cảnh báo an toàn từ máy chủ.');
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [user]);
 
   if (!user) return null;
-  const prefs = localPrefsAdapter.get(user.id);
-  const hasCKD = prefs.comorbidities.some((c) => c.toLowerCase().includes('ckd'));
-  const estKcal = estimateReferenceDailyKcal(profile, prefs.nutrition_goal);
-  const bmi = profile?.bmi ?? null;
 
-  const activeAlerts: SafetyAlertItem[] = [];
-  if (!profile || estKcal === null) {
-    activeAlerts.push(SAMPLE_SCENARIOS[0]);
-  }
-  if (hasCKD) {
-    activeAlerts.push(SAMPLE_SCENARIOS[1]);
-  }
-  if (bmi !== null && (bmi < 18.5 || bmi >= 30)) {
-    activeAlerts.push(SAMPLE_SCENARIOS[4]);
-  }
+  const activeAlerts = safetyData?.alerts ?? [];
 
   return (
     <AppLayout
@@ -110,39 +120,94 @@ export function SafetyAlertPage() {
     >
       <PageHeader
         title="Cảnh báo an toàn dinh dưỡng"
-        subtitle="Kiểm soát các điều kiện từ chối (Abstention), giới hạn bệnh lý và xung đột dị ứng — Không thay thế chẩn đoán y khoa"
+        subtitle="Kiểm soát các điều kiện từ chối (Abstention), giới hạn bệnh lý và xung đột dị ứng từ Backend Safety Guard — Không thay thế chẩn đoán y khoa"
       />
 
-      <section className="dc-card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <h2 style={{ fontSize: 17 }}>Trạng thái an toàn trên hồ sơ hiện tại của bạn</h2>
-          <StatusBadge tone={activeAlerts.length === 0 ? 'success' : 'warning'}>
-            {activeAlerts.length === 0 ? 'Không có cảnh báo đang kích hoạt' : `${activeAlerts.length} lưu ý cần xem xét`}
-          </StatusBadge>
-        </div>
+      {loading ? (
+        <LoadingSkeleton rows={4} />
+      ) : error ? (
+        <WarningCard level="error" title="Không tải được trạng thái an toàn">
+          {error}
+        </WarningCard>
+      ) : (
+        <>
+          {safetyData && (
+            <section className="dc-grid-3">
+              <StatCard
+                label="Trạng thái hồ sơ"
+                value={safetyData.is_profile_complete ? 'Đầy đủ' : 'Chưa đầy đủ'}
+                tone={safetyData.is_profile_complete ? 'primary' : 'warning'}
+              />
+              <StatCard
+                label="Chỉ số BMI"
+                value={safetyData.bmi != null ? safetyData.bmi : 'Chưa có'}
+                subtitle={safetyData.bmi_category ? `Phân loại: ${safetyData.bmi_category}` : undefined}
+              />
+              <StatCard
+                label="Mục tiêu năng lượng"
+                value={
+                  safetyData.target_energy_kcal != null
+                    ? Math.round(safetyData.target_energy_kcal)
+                    : 'Chưa đủ dữ liệu'
+                }
+                unit={safetyData.target_energy_kcal != null ? 'kcal/ngày' : undefined}
+                tone="secondary"
+              />
+            </section>
+          )}
 
-        {activeAlerts.length === 0 ? (
-          <WarningCard level="success" title="Hồ sơ hiện tại đủ điều kiện tham khảo thực đơn">
-            Không ghi nhận bệnh thận mạn (CKD) hoặc thiếu dữ liệu nhân trắc học. Luôn kiểm tra kỹ dị ứng trước khi xác nhận bữa ăn.
-          </WarningCard>
-        ) : (
-          activeAlerts.map((al) => (
-            <WarningCard
-              key={al.id}
-              level={al.level}
-              title={al.title}
-              action={
-                <PrimaryButton size="sm" onClick={() => navigate(al.action_route)}>
-                  {al.action_label}
-                </PrimaryButton>
-              }
-            >
-              <p><strong>Nguyên nhân:</strong> {al.cause}</p>
-              <p style={{ marginTop: 4 }}><strong>Hướng xử lý:</strong> {al.action_guidance}</p>
-            </WarningCard>
-          ))
-        )}
-      </section>
+          <section className="dc-card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+              <h2 style={{ fontSize: 17 }}>Trạng thái an toàn trên hồ sơ hiện tại của bạn</h2>
+              <StatusBadge
+                tone={
+                  safetyData?.has_blocking_condition
+                    ? 'danger'
+                    : activeAlerts.length === 0
+                      ? 'success'
+                      : 'warning'
+                }
+              >
+                {safetyData?.has_blocking_condition
+                  ? 'Có điều kiện chặn chuyên khoa (CKD)'
+                  : activeAlerts.length === 0
+                    ? 'Không có cảnh báo đang kích hoạt'
+                    : `${activeAlerts.length} lưu ý cần xem xét`}
+              </StatusBadge>
+            </div>
+
+            {activeAlerts.length === 0 ? (
+              <WarningCard level="success" title="Hồ sơ hiện tại đủ điều kiện tham khảo thực đơn">
+                Không ghi nhận bệnh thận mạn (CKD) hoặc thiếu dữ liệu nhân trắc học. Luôn kiểm tra kỹ dị ứng trước khi xác nhận bữa ăn.
+              </WarningCard>
+            ) : (
+              activeAlerts.map((al) => {
+                const action = routeForAlertCode(al.code);
+                return (
+                  <WarningCard
+                    key={al.code}
+                    level={al.level}
+                    title={`${al.title} (${al.code})`}
+                    action={
+                      <PrimaryButton size="sm" onClick={() => navigate(action.route)}>
+                        {action.label}
+                      </PrimaryButton>
+                    }
+                  >
+                    <p><strong>Chi tiết:</strong> {al.message}</p>
+                    {al.details.length > 0 && (
+                      <p style={{ marginTop: 4 }}>
+                        <strong>Trường liên quan:</strong> {al.details.join(', ')}
+                      </p>
+                    )}
+                    <p style={{ marginTop: 4 }}><strong>Hướng xử lý:</strong> {al.action_guidance}</p>
+                  </WarningCard>
+                );
+              })
+            )}
+          </section>
+        </>
+      )}
 
       <section className="dc-card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <h2 style={{ fontSize: 17 }}>5 trạng thái bảo vệ an toàn chuẩn của hệ thống</h2>
