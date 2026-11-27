@@ -8,7 +8,13 @@ import { LoadingSkeleton } from '../../components/ui/Feedback';
 import { PageHeader } from '../../components/ui/NavigationUI';
 import { StatusBadge } from '../../components/ui/Badges';
 import { foodsApi } from '../../services/nutritionApi';
-import type { FoodItem } from '../../types/nutrition';
+import type { FoodItem, PreparationStateType } from '../../types/nutrition';
+
+const PREP_STATE_LABELS: Record<PreparationStateType, string> = {
+  cooked: 'Đã nấu chín (Cooked)',
+  raw: 'Tươi sống (Raw)',
+  ready_to_eat: 'Ăn liền / Chế biến sẵn (Ready-to-eat)',
+};
 
 export function FoodDetailPage() {
   const { foodId } = useParams<{ foodId: string }>();
@@ -76,6 +82,9 @@ export function FoodDetailPage() {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <StatusBadge tone="info">{food.category}</StatusBadge>
+                <StatusBadge tone="neutral">
+                  {PREP_STATE_LABELS[food.preparation_state] ?? food.preparation_state}
+                </StatusBadge>
                 {food.is_test_data && <StatusBadge tone="warning">Dữ liệu thử nghiệm</StatusBadge>}
               </div>
 
@@ -105,12 +114,13 @@ export function FoodDetailPage() {
             <h3 style={{ fontSize: 17, marginBottom: 14 }}>Bảng thành phần dinh dưỡng chi tiết</h3>
             <div className="dc-grid-4">
               <StatCard label="Chất béo (Fat)" value={food.fat_g} unit="g" />
+              <StatCard label="Chất béo bão hòa" value={formatOrEmpty(food.saturated_fat_g, 'g')} />
               <StatCard label="Chất xơ (Fiber)" value={formatOrEmpty(food.fiber_g, 'g')} />
               <StatCard label="Natri (Sodium)" value={formatOrEmpty(food.sodium_mg, 'mg')} />
               <StatCard
                 label="Đường đơn (Sugar)"
-                value={food.sugar_g === null || food.sugar_g === undefined ? 'Chưa có dữ liệu' : `${food.sugar_g}g`}
-                subtitle="Không hiển thị 0 nếu chưa có tách đường đơn xác thực"
+                value={formatOrEmpty(food.sugar_g, 'g')}
+                subtitle="Giữ nguyên trạng thái trống nếu chưa có tách đường đơn xác thực"
               />
               <StatCard label="Chỉ số đường huyết (GI)" value={formatOrEmpty(food.glycemic_index)} />
               <StatCard label="Tải lượng đường huyết (GL)" value={formatOrEmpty(food.glycemic_load)} />
@@ -121,7 +131,8 @@ export function FoodDetailPage() {
             <section className="dc-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <h3 style={{ fontSize: 16 }}>Thành phần, chế biến & Lưu ý ĐTĐ Type 2</h3>
               <p style={{ fontSize: 14, color: 'var(--dc-text-secondary)' }}>
-                <strong>Thành phần nguyên liệu:</strong> Theo cấu phần chuẩn hóa của món "{food.name}" ({food.serving_size_g}g).
+                <strong>Trạng thái chế biến:</strong>{' '}
+                {PREP_STATE_LABELS[food.preparation_state] ?? food.preparation_state}
               </p>
               <p style={{ fontSize: 14, color: 'var(--dc-text-secondary)' }}>
                 <strong>Cách chế biến & khẩu phần:</strong> Ưu tiên luộc, hấp, áp chảo ít dầu; hạn chế nêm muối, nước mắm và đường tinh luyện.
@@ -132,21 +143,30 @@ export function FoodDetailPage() {
             </section>
 
             <section className="dc-card" style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <h3 style={{ fontSize: 16 }}>Dị nguyên & Nguồn dữ liệu</h3>
-              <p style={{ fontSize: 14, color: 'var(--dc-text-secondary)' }}>
-                <strong>Dị nguyên tiềm ẩn:</strong>{' '}
-                {food.name.toLowerCase().includes('tôm') || food.name.toLowerCase().includes('cá')
-                  ? 'Hải sản / Cá'
-                  : food.name.toLowerCase().includes('đậu phụ')
-                    ? 'Đậu nành'
-                    : food.name.toLowerCase().includes('lạc') || food.name.toLowerCase().includes('đậu phộng')
-                      ? 'Đậu phộng'
-                      : food.name.toLowerCase().includes('trứng')
-                        ? 'Trứng'
-                        : 'Chưa ghi nhận dị nguyên phổ biến (kiểm tra thành phần gia vị đi kèm)'}
+              <h3 style={{ fontSize: 16 }}>Dị nguyên & Nguồn dữ liệu chuẩn hóa</h3>
+              <div>
+                <strong style={{ fontSize: 14, color: 'var(--dc-text-secondary)' }}>
+                  Dị nguyên chuẩn hóa (Allergens):
+                </strong>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+                  {food.allergens && food.allergens.length > 0 ? (
+                    food.allergens.map((al) => (
+                      <StatusBadge key={al.id} tone="danger">
+                        {al.name_vi} ({al.code})
+                      </StatusBadge>
+                    ))
+                  ) : (
+                    <StatusBadge tone="success">Không ghi nhận dị nguyên phổ biến</StatusBadge>
+                  )}
+                </div>
+              </div>
+
+              <p style={{ fontSize: 14, color: 'var(--dc-text-secondary)', marginTop: 4 }}>
+                <strong>Mã nguồn chuẩn hóa:</strong> {food.data_source} · <strong>Phiên bản:</strong>{' '}
+                {food.data_version}
               </p>
               <p style={{ fontSize: 14, color: 'var(--dc-text-secondary)' }}>
-                <strong>Nguồn dữ liệu thực phẩm:</strong> {food.source_name || 'Chưa có dữ liệu nguồn'}
+                <strong>Tài liệu tham chiếu:</strong> {food.source_name || 'Chưa có dữ liệu nguồn'}
               </p>
               {food.source_url && (
                 <a

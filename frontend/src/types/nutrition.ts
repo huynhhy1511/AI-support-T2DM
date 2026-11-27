@@ -1,8 +1,18 @@
 export type SexType = 'male' | 'female' | 'other';
 export type ActivityLevelType = 'sedentary' | 'light' | 'moderate' | 'active' | 'very_active';
+export type NutritionGoalType = 'weight_loss' | 'maintenance';
 export type MealType = 'breakfast' | 'lunch' | 'dinner' | 'snack';
+export type PreparationStateType = 'raw' | 'cooked' | 'ready_to_eat';
 
-/** Khớp chính xác schema backend HealthProfileResponse */
+/** Khớp chính xác schema backend AllergenResponse (Migration 004) */
+export interface AllergenItem {
+  id: string;
+  code: string;
+  name_vi: string;
+  name_en: string;
+}
+
+/** Khớp chính xác schema backend HealthProfileResponse (Migration 005) */
 export interface HealthProfile {
   id: string;
   user_id: string;
@@ -14,6 +24,12 @@ export interface HealthProfile {
   diagnosis_year: number | null;
   activity_level: ActivityLevelType | null;
   dietary_preference: string | null;
+  nutrition_goal: NutritionGoalType;
+  comorbidities: string[];
+  allergies: string[];
+  bmr_kcal: number | null;
+  tdee_kcal: number | null;
+  target_energy_kcal: number | null;
   bmi: number | null;
   updated_at: string;
 }
@@ -28,20 +44,22 @@ export interface HealthProfilePayload {
   diagnosis_year?: number | null;
   activity_level?: ActivityLevelType | null;
   dietary_preference?: string | null;
+  nutrition_goal?: NutritionGoalType;
+  comorbidities?: string[];
+  allergies?: string[];
 }
 
-/**
- * Thông tin mở rộng phục vụ module Nutrition ở FE khi backend HealthProfile chưa có các cột này.
- * Lưu trữ cục bộ theo user_id (LocalStorage adapter).
- */
-export interface LocalClinicalPreferences {
-  nutrition_goal: 'weight_loss' | 'maintenance';
-  comorbidities: string[]; // vd: ['Type 2 Diabetes', 'Hypertension', 'CKD']
-  allergies: string[];     // vd: ['Hải sản', 'Đậu nành', 'Đậu phộng', 'Trứng']
-  weight_updated_at?: string;
+/** Khớp chính xác schema backend HealthProfileCompletenessResponse */
+export interface HealthProfileCompleteness {
+  is_complete: boolean;
+  missing_fields: string[];
+  bmi: number | null;
+  bmr_kcal: number | null;
+  tdee_kcal: number | null;
+  target_energy_kcal: number | null;
 }
 
-/** Khớp chính xác schema backend FoodResponse */
+/** Khớp chính xác schema backend FoodResponse (Migration 004) */
 export interface FoodItem {
   id: string;
   name: string;
@@ -57,11 +75,22 @@ export interface FoodItem {
   glycemic_load: number | null;
   sodium_mg: number | null;
   saturated_fat_g: number | null;
+  preparation_state: PreparationStateType;
+  data_source: string;
+  data_version: string;
   is_test_data: boolean;
   source_name: string | null;
   source_url: string | null;
+  allergens: AllergenItem[];
   created_at: string;
   updated_at: string;
+}
+
+/** Khớp chính xác schema backend FoodAlternativeResponse (Đợt 6B) */
+export interface FoodAlternativeItem extends FoodItem {
+  kcal_diff: number;
+  gi_diff: number | null;
+  similarity_reason: string;
 }
 
 /** Khớp chính xác schema backend RecommendedFoodItem */
@@ -92,6 +121,7 @@ export interface MealRecommendationRequest {
   dietary_preference?: string | null;
   excluded_food_ids?: string[] | null;
   excluded_keywords?: string[] | null;
+  excluded_allergens?: string[] | null;
   custom_target?: {
     target_energy_kcal?: number | null;
     target_carbohydrate_g?: number | null;
@@ -99,11 +129,13 @@ export interface MealRecommendationRequest {
   } | null;
 }
 
-/** Khớp chính xác schema backend MealRecommendationResponse */
+/** Khớp chính xác schema backend MealRecommendationResponse (Đợt 6A + 6B) */
 export interface MealRecommendationResponse {
   recommendation_id: string;
   user_id: string;
   meal_type: MealType;
+  status: 'generated' | 'abstained';
+  reason_code?: string | null;
   algorithm_version: string;
   generated_at: string;
   items: RecommendedFoodItem[];
@@ -112,45 +144,179 @@ export interface MealRecommendationResponse {
   total_protein_g: number;
   total_fat_g: number;
   total_fiber_g: number;
+  total_sodium_mg?: number | null;
+  total_saturated_fat_g?: number | null;
   meal_balance_evaluation: string;
   safety_notes: string[];
   clinical_safety_disclaimer: string;
 }
 
-export interface DailyMealPlan {
-  date: string; // YYYY-MM-DD
-  generated_at: string;
-  meals: Partial<Record<MealType, MealRecommendationResponse>>;
-  status: 'active' | 'draft' | 'abstained';
-  abstention_reason?: string | null;
-  missing_fields?: string[];
-  applied_preference?: string | null;
-  applied_goal?: string | null;
+/** Khớp chính xác schema backend FoodSubstitutionRequest */
+export interface FoodSubstitutionRequest {
+  original_food_id: string;
+  replacement_food_id: string;
+  serving_g?: number | null;
 }
 
-export type DiaryLogStatus = 'planned' | 'eaten_full' | 'eaten_partial' | 'eaten_other' | 'skipped';
+/** Khớp chính xác schema backend DailyNutritionSummary & DailyRecommendationsResponse */
+export interface DailyNutritionSummary {
+  total_energy_kcal: number;
+  total_carbohydrate_g: number;
+  total_protein_g: number;
+  total_fat_g: number;
+  total_fiber_g: number;
+  total_sodium_mg: number;
+  total_saturated_fat_g: number;
+  meals_count: number;
+}
 
-export interface MealDiaryEntry {
+export interface DailyRecommendationsResponse {
+  date: string;
+  user_id: string;
+  meals: MealRecommendationResponse[];
+  daily_summary: DailyNutritionSummary;
+}
+
+/** Khớp chính xác schema backend SafetyAlertSchema & SafetyAlertsResponse */
+export interface BackendSafetyAlert {
+  code: string;
+  level: 'info' | 'warning' | 'error' | 'critical';
+  title: string;
+  message: string;
+  action_guidance: string;
+  details: string[];
+}
+
+export interface SafetyAlertsResponse {
+  user_id: string;
+  has_blocking_condition: boolean;
+  is_profile_complete: boolean;
+  bmi: number | null;
+  bmi_category: string | null;
+  target_energy_kcal: number | null;
+  alerts: BackendSafetyAlert[];
+}
+
+/* ==========================================================================
+   MEAL DIARY & PROGRESS TYPES (Khớp 100% backend/app/schemas/meal_diary.py)
+   ========================================================================== */
+
+export type MealLogStatusType = 'eaten' | 'partially_eaten' | 'skipped' | 'eaten_other';
+
+export interface MealLogItemCreate {
+  food_id?: string | null;
+  custom_food_name?: string | null;
+  serving_g: number;
+  calories_kcal?: number | null;
+  carbs_g?: number | null;
+  protein_g?: number | null;
+  fat_g?: number | null;
+  fiber_g?: number | null;
+  sodium_mg?: number | null;
+}
+
+export interface MealLogItem {
   id: string;
-  date: string;
-  meal_type: MealType;
-  status: DiaryLogStatus;
-  portion_ratio: number; // 1.0, 0.75, 0.5, 0
-  logged_at: string;
-  note?: string;
-  custom_food_name?: string;
-  photo_preview_url?: string;
-  actual_energy_kcal: number;
-  actual_carbohydrate_g: number;
-  actual_protein_g: number;
-  actual_fat_g: number;
-  actual_fiber_g: number;
-  actual_sodium_mg: number;
+  food_id: string | null;
+  food_name: string | null;
+  custom_food_name: string | null;
+  serving_g: number;
+  calories_kcal: number;
+  carbs_g: number;
+  protein_g: number;
+  fat_g: number;
+  fiber_g: number | null;
+  sodium_mg: number | null;
 }
 
-export interface WeightLogEntry {
-  date: string;
+export interface ActualNutrition {
+  calories_kcal: number;
+  carbs_g: number;
+  protein_g: number;
+  fat_g: number;
+  fiber_g: number | null;
+  sodium_mg: number | null;
+}
+
+export interface MealLogCreate {
+  recommendation_id?: string | null;
+  meal_date?: string;
+  meal_type: MealType;
+  status: MealLogStatusType;
+  notes?: string | null;
+  items: MealLogItemCreate[];
+}
+
+export interface MealLogUpdate {
+  status?: MealLogStatusType;
+  notes?: string | null;
+  items?: MealLogItemCreate[];
+}
+
+export interface MealLog {
+  id: string;
+  user_id: string;
+  recommendation_id: string | null;
+  meal_date: string;
+  meal_type: MealType;
+  status: MealLogStatusType;
+  notes: string | null;
+  items: MealLogItem[];
+  actual_nutrition: ActualNutrition;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MealLogListResponse {
+  items: MealLog[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface WeightRecordCreate {
   weight_kg: number;
+  recorded_at?: string;
+}
+
+export interface WeightRecord {
+  id: string;
+  user_id: string;
+  weight_kg: number;
+  recorded_at: string;
+  created_at: string;
+}
+
+export interface ProgressPeriod {
+  date_from: string;
+  date_to: string;
+}
+
+export interface ProgressSummary {
+  total_meals_logged: number;
+  total_meals_skipped: number;
+  meal_logging_rate: number;
+}
+
+export interface NutritionTrendPoint {
+  date: string;
+  planned_calories_kcal: number;
+  actual_calories_kcal: number;
+  planned_carbs_g: number;
+  actual_carbs_g: number;
+}
+
+export interface WeightProgressSummary {
+  latest_kg: number | null;
+  previous_kg: number | null;
+  records: WeightRecord[];
+}
+
+export interface NutritionProgressResponse {
+  period: ProgressPeriod;
+  summary: ProgressSummary;
+  nutrition_trends: NutritionTrendPoint[];
+  weight: WeightProgressSummary;
 }
 
 export interface SafetyAlertItem {

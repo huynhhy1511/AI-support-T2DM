@@ -1,26 +1,32 @@
-import { useEffect, useState } from 'react';
-import { Scale, TrendingUp } from 'lucide-react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { Plus, Scale, TrendingUp } from 'lucide-react';
 import { AppLayout } from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
-import { SecondaryButton } from '../../components/ui/Buttons';
+import { PrimaryButton, SecondaryButton } from '../../components/ui/Buttons';
 import { StatCard, WarningCard } from '../../components/ui/Cards';
 import { EmptyState, LoadingSkeleton } from '../../components/ui/Feedback';
 import { PageHeader } from '../../components/ui/NavigationUI';
 import {
-  foodDiaryStorage,
-  mealPlanStorage,
   nutritionBackendApi,
-  weightHistoryStorage,
+  progressApi,
 } from '../../services/nutritionApi';
-import type { MealRecommendationResponse, WeightLogEntry } from '../../types/nutrition';
+import type {
+  MealRecommendationResponse,
+  NutritionProgressResponse,
+  WeightRecord,
+} from '../../types/nutrition';
 
 type TimeRange = 7 | 30 | 90;
 
+function formatDate(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export function NutritionProgressPage() {
   const { user } = useAuth();
-  const [range, setRange] = useState<TimeRange>(7);
+  const [range, setRange] = useState<TimeRange>(30);
   const [loading, setLoading] = useState(true);
-  const [weights, setWeights] = useState<WeightLogEntry[]>([]);
+  const [progress, setProgress] = useState<NutritionProgressResponse | null>(null);
   const [history, setHistory] = useState<Array<{
     id: string;
     meal_type: string;
@@ -28,83 +34,108 @@ export function NutritionProgressPage() {
     generated_at: string;
     result: MealRecommendationResponse;
   }>>([]);
-  const [hoverPoint, setHoverPoint] = useState<WeightLogEntry | null>(null);
+  const [hoverPoint, setHoverPoint] = useState<WeightRecord | null>(null);
+
+  // Weight quick-log form
+  const [weightInput, setWeightInput] = useState('');
+  const [weightDate, setWeightDate] = useState(() => formatDate(new Date()));
+  const [savingWeight, setSavingWeight] = useState(false);
+  const [weightFeedback, setWeightFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
+
+  const loadProgress = useCallback(async (userId: string, days: TimeRange) => {
+    setLoading(true);
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - (days - 1));
+
+    try {
+      const [progRes, recs] = await Promise.all([
+        progressApi
+          .getProgress({ date_from: formatDate(start), date_to: formatDate(end) })
+          .catch(() => null),
+        nutritionBackendApi.getHistory(userId, 30).catch(() => []),
+      ]);
+      setProgress(progRes);
+      setHistory(recs);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!user) return;
-    let active = true;
-    (async () => {
-      setLoading(true);
-      try {
-        const recs = await nutritionBackendApi.getHistory(user.id, 30).catch(() => []);
-        if (active) setHistory(recs);
-      } finally {
-        if (active) {
-          setWeights(weightHistoryStorage.getAll(user.id));
-          setLoading(false);
-        }
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, [user]);
+    void loadProgress(user.id, range);
+  }, [user, range, loadProgress]);
 
   if (!user) return null;
 
-  // Filter weight history by range
-  const cutoff = new Date();
-  cutoff.setDate(cutoff.getDate() - range);
-  const cutoffStr = cutoff.toISOString().slice(0, 10);
-  const filteredWeights = weights.filter((w) => w.date >= cutoffStr);
+  const handleLogWeight = async (e: FormEvent) => {
+    e.preventDefault();
+    setWeightFeedback(null);
+    const kg = Number(weightInput);
+    if (!weightInput || Number.isNaN(kg) || kg <= 20 || kg > 300) {
+      setWeightFeedback({ type: 'error', msg: 'Vui lòng nhập cân nặng hợp lệ (20 – 300 kg).' });
+      return;
+    }
 
-  const latestWeight = filteredWeights.length > 0 ? filteredWeights[filteredWeights.length - 1].weight_kg : null;
-  const firstWeight = filteredWeights.length > 0 ? filteredWeights[0].weight_kg : null;
+    setSavingWeight(true);
+    try {
+      await progressApi.logWeight({ weight_kg: kg, recorded_at: weightDate });
+      setWeightInput('');
+      setWeightFeedback({
+        type: 'success',
+        msg: `Đã lưu cân nặng ${kg} kg cho ngày ${weightDate} và đồng bộ hồ sơ sức khỏe.`,
+      });
+      await loadProgress(user.id, range);
+    } catch (err) {
+      setWeightFeedback({
+        type: 'error',
+        msg: err instanceof Error ? err.message : 'Không thể lưu cân nặng. Vui lòng thử lại.',
+      });
+    } finally {
+      setSavingWeight(false);
+    }
+  };
+
+  const weightRecords = progress?.weight.records ?? [];
+  const latestWeight = progress?.weight.latest_kg ?? null;
+  const previousWeight = progress?.weight.previous_kg ?? null;
   const weightDelta =
-    latestWeight !== null && firstWeight !== null
-      ? Number((latestWeight - firstWeight).toFixed(1))
+    latestWeight !== null && previousWeight !== null
+      ? Number((latestWeight - previousWeight).toFixed(1))
       : null;
 
-  // Aggregate diary & planned meals
-  const diaryDates = foodDiaryStorage.listDates(user.id).filter((d) => d >= cutoffStr);
-  let loggedMeals = 0;
-  let skippedMeals = 0;
-  let totalPlannedKcal = 0;
-  let totalActualKcal = 0;
-  let totalActualCarb = 0;
-  let totalActualProtein = 0;
-  let totalActualFat = 0;
-
-  for (const d of diaryDates) {
-    const plan = mealPlanStorage.getByDate(user.id, d);
-    if (plan) {
-      totalPlannedKcal += Object.values(plan.meals).reduce(
-        (s, m) => s + (m?.total_energy_kcal ?? 0),
-        0
-      );
-    }
-    const entries = foodDiaryStorage.getByDate(user.id, d);
-    if (entries) {
-      for (const e of Object.values(entries)) {
-        if (e.status === 'skipped') skippedMeals += 1;
-        else if (e.status !== 'planned') {
-          loggedMeals += 1;
-          totalActualKcal += e.actual_energy_kcal;
-          totalActualCarb += e.actual_carbohydrate_g;
-          totalActualProtein += e.actual_protein_g;
-          totalActualFat += e.actual_fat_g;
-        }
-      }
-    }
-  }
+  const summary = progress?.summary;
+  const loggedMeals = summary?.total_meals_logged ?? 0;
+  const skippedMeals = summary?.total_meals_skipped ?? 0;
   const totalTracked = loggedMeals + skippedMeals;
-  const compliancePct = totalTracked > 0 ? Math.round((loggedMeals / totalTracked) * 100) : 0;
+  const compliancePct = Math.round((summary?.meal_logging_rate ?? 0) * 100);
+
+  const trends = progress?.nutrition_trends ?? [];
+  const totalPlannedKcal = Math.round(
+    trends.reduce((s, t) => s + t.planned_calories_kcal, 0)
+  );
+  const totalActualKcal = Math.round(
+    trends.reduce((s, t) => s + t.actual_calories_kcal, 0)
+  );
+  const totalPlannedCarb = Number(
+    trends.reduce((s, t) => s + t.planned_carbs_g, 0).toFixed(1)
+  );
+  const totalActualCarb = Number(
+    trends.reduce((s, t) => s + t.actual_carbs_g, 0).toFixed(1)
+  );
 
   // SVG chart coordinates
   const chartW = 560;
   const chartH = 170;
-  const minW = filteredWeights.length > 0 ? Math.min(...filteredWeights.map((w) => w.weight_kg)) - 2 : 40;
-  const maxW = filteredWeights.length > 0 ? Math.max(...filteredWeights.map((w) => w.weight_kg)) + 2 : 90;
+  const minW =
+    weightRecords.length > 0
+      ? Math.min(...weightRecords.map((w) => w.weight_kg)) - 2
+      : 40;
+  const maxW =
+    weightRecords.length > 0
+      ? Math.max(...weightRecords.map((w) => w.weight_kg)) + 2
+      : 90;
   const spanW = Math.max(1, maxW - minW);
 
   return (
@@ -117,7 +148,7 @@ export function NutritionProgressPage() {
     >
       <PageHeader
         title="Theo dõi tiến triển dinh dưỡng"
-        subtitle="Tổng hợp xu hướng cân nặng, tuân thủ nhật ký ăn uống và lịch sử thực đơn"
+        subtitle="Tổng hợp xu hướng cân nặng, tuân thủ nhật ký ăn uống (Planned vs Actual) từ PostgreSQL"
         actions={
           <div style={{ display: 'flex', gap: 8 }}>
             {([7, 30, 90] as TimeRange[]).map((r) => (
@@ -143,19 +174,19 @@ export function NutritionProgressPage() {
         <LoadingSkeleton rows={4} />
       ) : (
         <>
-          {/* B. Weight Tracking */}
-          <section className="dc-card">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, flexWrap: 'wrap', gap: 10 }}>
+          {/* B. Weight Tracking & Quick Upsert Form */}
+          <section className="dc-card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
               <div>
                 <h2 style={{ fontSize: 17 }}>Biểu đồ theo dõi cân nặng (kg)</h2>
                 <span style={{ fontSize: 13, color: 'var(--dc-text-secondary)' }}>
-                  Đơn vị: kg · Khoảng thời gian: {range} ngày gần nhất
+                  Đơn vị: kg · Khoảng thời gian: {progress?.period.date_from} → {progress?.period.date_to}
                 </span>
               </div>
               <div style={{ display: 'flex', gap: 16, fontSize: 14 }}>
                 <span>Gần nhất: <strong>{latestWeight !== null ? `${latestWeight} kg` : 'Chưa có'}</strong></span>
                 <span>
-                  Thay đổi:{' '}
+                  So với lần trước:{' '}
                   <strong>
                     {weightDelta !== null ? `${weightDelta > 0 ? '+' : ''}${weightDelta} kg` : 'Chưa đủ dữ liệu'}
                   </strong>
@@ -163,11 +194,47 @@ export function NutritionProgressPage() {
               </div>
             </div>
 
-            {filteredWeights.length === 0 ? (
+            <form
+              onSubmit={handleLogWeight}
+              style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center' }}
+            >
+              <input
+                type="date"
+                className="dc-input"
+                style={{ width: 170 }}
+                value={weightDate}
+                onChange={(e) => setWeightDate(e.target.value)}
+                disabled={savingWeight}
+              />
+              <input
+                type="number"
+                step="0.1"
+                className="dc-input"
+                style={{ width: 180 }}
+                placeholder="Nhập cân nặng (kg)..."
+                value={weightInput}
+                onChange={(e) => setWeightInput(e.target.value)}
+                disabled={savingWeight}
+              />
+              <PrimaryButton type="submit" size="sm" loading={savingWeight} icon={<Plus size={15} />}>
+                Lưu cân nặng
+              </PrimaryButton>
+            </form>
+
+            {weightFeedback && (
+              <WarningCard
+                level={weightFeedback.type === 'success' ? 'success' : 'error'}
+                title={weightFeedback.type === 'success' ? 'Đã ghi nhận cân nặng' : 'Lỗi ghi nhận'}
+              >
+                {weightFeedback.msg}
+              </WarningCard>
+            )}
+
+            {weightRecords.length === 0 ? (
               <EmptyState
                 icon={<Scale size={24} />}
-                title="Chưa có dữ liệu cân nặng"
-                description="Hãy lưu cân nặng tại trang Hồ sơ dinh dưỡng để bắt đầu theo dõi xu hướng."
+                title="Chưa có dữ liệu cân nặng trong giai đoạn này"
+                description="Hãy nhập cân nặng ở biểu mẫu phía trên để bắt đầu theo dõi xu hướng trên máy chủ."
               />
             ) : (
               <div style={{ overflowX: 'auto' }}>
@@ -177,14 +244,14 @@ export function NutritionProgressPage() {
                   <text x={6} y={24} fontSize={11} fill="#64748B">{maxW.toFixed(0)}kg</text>
                   <text x={6} y={chartH - 32} fontSize={11} fill="#64748B">{minW.toFixed(0)}kg</text>
 
-                  {filteredWeights.length > 1 && (
+                  {weightRecords.length > 1 && (
                     <polyline
                       fill="none"
                       stroke="#16865A"
                       strokeWidth={2.5}
-                      points={filteredWeights
+                      points={weightRecords
                         .map((pt, i) => {
-                          const x = 55 + (i / Math.max(1, filteredWeights.length - 1)) * (chartW - 95);
+                          const x = 55 + (i / Math.max(1, weightRecords.length - 1)) * (chartW - 95);
                           const y = chartH - 35 - ((pt.weight_kg - minW) / spanW) * (chartH - 55);
                           return `${x},${y}`;
                         })
@@ -192,22 +259,22 @@ export function NutritionProgressPage() {
                     />
                   )}
 
-                  {filteredWeights.map((pt, i) => {
+                  {weightRecords.map((pt, i) => {
                     const x =
-                      filteredWeights.length === 1
+                      weightRecords.length === 1
                         ? chartW / 2
-                        : 55 + (i / Math.max(1, filteredWeights.length - 1)) * (chartW - 95);
+                        : 55 + (i / Math.max(1, weightRecords.length - 1)) * (chartW - 95);
                     const y = chartH - 35 - ((pt.weight_kg - minW) / spanW) * (chartH - 55);
                     return (
                       <g
-                        key={pt.date}
+                        key={pt.id}
                         onMouseEnter={() => setHoverPoint(pt)}
                         onMouseLeave={() => setHoverPoint(null)}
                         style={{ cursor: 'pointer' }}
                       >
                         <circle cx={x} cy={y} r={5} fill="#16865A" stroke="#ffffff" strokeWidth={2} />
                         <text x={x - 22} y={chartH - 12} fontSize={10.5} fill="#64748B">
-                          {pt.date.slice(5)}
+                          {pt.recorded_at.slice(5)}
                         </text>
                       </g>
                     );
@@ -215,7 +282,7 @@ export function NutritionProgressPage() {
                 </svg>
                 {hoverPoint && (
                   <div style={{ fontSize: 13, color: 'var(--dc-primary)', fontWeight: 600 }}>
-                    Chi tiết: Ngày {hoverPoint.date} — {hoverPoint.weight_kg} kg
+                    Chi tiết: Ngày {hoverPoint.recorded_at} — {hoverPoint.weight_kg} kg
                   </div>
                 )}
               </div>
@@ -225,22 +292,22 @@ export function NutritionProgressPage() {
           {/* C & D. Nutrition Tracking & Meal Compliance */}
           <section className="dc-grid-4">
             <StatCard
-              label="Kế hoạch vs Thực tế (Kcal)"
-              value={`${Math.round(totalActualKcal)} / ${Math.round(totalPlannedKcal)}`}
+              label="Thực tế / Kế hoạch (Kcal)"
+              value={`${totalActualKcal} / ${totalPlannedKcal}`}
               unit="kcal"
-              subtitle={`Trong ${diaryDates.length} ngày có ghi nhận`}
+              subtitle={`Trong ${trends.length} ngày có dữ liệu`}
               icon={<TrendingUp size={18} />}
             />
             <StatCard
-              label="Macro thực tế (Carb / Đạm / Béo)"
-              value={`${Math.round(totalActualCarb)}g / ${Math.round(totalActualProtein)}g`}
-              subtitle={`Chất béo: ${Math.round(totalActualFat)}g`}
+              label="Carb thực tế / Kế hoạch"
+              value={`${totalActualCarb}g / ${totalPlannedCarb}g`}
+              subtitle="Tổng hợp theo kỳ đã chọn"
               tone="secondary"
             />
             <StatCard
-              label="Số bữa đã ghi nhận / Bỏ qua"
+              label="Số bữa đã ăn / Bỏ qua"
               value={`${loggedMeals} / ${skippedMeals}`}
-              subtitle="Ghi nhận thực tế trong nhật ký"
+              subtitle="Ghi nhận thực tế trong meal_logs"
             />
             <StatCard
               label="Tỷ lệ hoàn thành nhật ký"
@@ -248,6 +315,43 @@ export function NutritionProgressPage() {
               subtitle={totalTracked > 0 ? `${loggedMeals}/${totalTracked} bữa` : 'Chưa có dữ liệu'}
               tone="primary"
             />
+          </section>
+
+          {/* D2. Daily Planned vs Actual Trends */}
+          <section className="dc-card">
+            <h2 style={{ fontSize: 17, marginBottom: 14 }}>
+              Đối chiếu Kế hoạch vs Thực tế theo ngày
+            </h2>
+            {trends.length === 0 ? (
+              <p style={{ fontSize: 14, color: 'var(--dc-text-secondary)' }}>
+                Chưa có dữ liệu thực đơn hoặc nhật ký ăn uống trong khoảng thời gian đã chọn.
+              </p>
+            ) : (
+              <div className="dc-table-wrap">
+                <table className="dc-table">
+                  <thead>
+                    <tr>
+                      <th>Ngày</th>
+                      <th>Kế hoạch (Kcal)</th>
+                      <th>Thực tế (Kcal)</th>
+                      <th>Kế hoạch (Carb)</th>
+                      <th>Thực tế (Carb)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {trends.map((t) => (
+                      <tr key={t.date}>
+                        <td>{t.date}</td>
+                        <td>{Math.round(t.planned_calories_kcal)} kcal</td>
+                        <td><strong>{Math.round(t.actual_calories_kcal)} kcal</strong></td>
+                        <td>{t.planned_carbs_g} g</td>
+                        <td><strong>{t.actual_carbs_g} g</strong></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </section>
 
           {/* E. History */}

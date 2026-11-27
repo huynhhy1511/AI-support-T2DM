@@ -3,23 +3,37 @@ import { Plus, Save, X } from 'lucide-react';
 import { AppLayout } from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { PrimaryButton, SecondaryButton } from '../../components/ui/Buttons';
-import { WarningCard } from '../../components/ui/Cards';
+import { StatCard, WarningCard } from '../../components/ui/Cards';
 import { FormField } from '../../components/ui/FormControls';
 import { LoadingSkeleton } from '../../components/ui/Feedback';
 import { PageHeader } from '../../components/ui/NavigationUI';
 import { StatusBadge } from '../../components/ui/Badges';
-import {
-  healthProfileApi,
-  localPrefsAdapter,
-  weightHistoryStorage,
-} from '../../services/nutritionApi';
-import type { ActivityLevelType, HealthProfile, SexType } from '../../types/nutrition';
+import { healthProfileApi } from '../../services/nutritionApi';
+import type {
+  ActivityLevelType,
+  HealthProfile,
+  NutritionGoalType,
+  SexType,
+} from '../../types/nutrition';
 
 const COMORBIDITY_OPTIONS = [
-  { id: 'Type 2 Diabetes', label: 'Đái tháo đường Type 2' },
-  { id: 'Hypertension', label: 'Tăng huyết áp' },
-  { id: 'CKD', label: 'Bệnh thận mạn (CKD)' },
-  { id: 'Dyslipidemia', label: 'Rối loạn mỡ máu' },
+  { id: 'type2_diabetes', label: 'Đái tháo đường Type 2' },
+  { id: 'hypertension', label: 'Tăng huyết áp' },
+  { id: 'ckd', label: 'Bệnh thận mạn (CKD)' },
+  { id: 'dyslipidemia', label: 'Rối loạn mỡ máu' },
+];
+
+const STANDARD_ALLERGENS = [
+  { code: 'shellfish', label: 'Hải sản có vỏ (Tôm, cua, mực)' },
+  { code: 'fish', label: 'Cá' },
+  { code: 'seafood', label: 'Hải sản chung' },
+  { code: 'egg', label: 'Trứng' },
+  { code: 'dairy', label: 'Sữa & chế phẩm sữa' },
+  { code: 'soy', label: 'Đậu nành' },
+  { code: 'peanut', label: 'Đậu phộng (lạc)' },
+  { code: 'tree_nut', label: 'Hạt cây' },
+  { code: 'gluten', label: 'Gluten' },
+  { code: 'sesame', label: 'Mè (vừng)' },
 ];
 
 const DIET_OPTIONS = [
@@ -30,11 +44,19 @@ const DIET_OPTIONS = [
   { value: 'low_sodium', label: 'Ít muối (Low Sodium)' },
 ];
 
+function normalizeComorbidityId(raw: string): string {
+  const lower = raw.toLowerCase().trim();
+  if (lower.includes('ckd') || lower.includes('bệnh thận')) return 'ckd';
+  if (lower.includes('hypertension') || lower.includes('tăng huyết áp')) return 'hypertension';
+  if (lower.includes('dyslipidemia') || lower.includes('mỡ máu')) return 'dyslipidemia';
+  if (lower.includes('diabetes') || lower.includes('đái tháo đường')) return 'type2_diabetes';
+  return lower;
+}
+
 export function NutritionProfilePage() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [hasProfile, setHasProfile] = useState(false);
 
   const [dob, setDob] = useState('');
   const [sex, setSex] = useState<SexType | ''>('');
@@ -42,11 +64,12 @@ export function NutritionProfilePage() {
   const [weightKg, setWeightKg] = useState('');
   const [activityLevel, setActivityLevel] = useState<ActivityLevelType | ''>('');
   const [dietaryPreference, setDietaryPreference] = useState('normal');
-  const [nutritionGoal, setNutritionGoal] = useState<'weight_loss' | 'maintenance'>('maintenance');
-  const [comorbidities, setComorbidities] = useState<string[]>(['Type 2 Diabetes']);
+  const [nutritionGoal, setNutritionGoal] = useState<NutritionGoalType>('maintenance');
+  const [comorbidities, setComorbidities] = useState<string[]>(['type2_diabetes']);
   const [allergies, setAllergies] = useState<string[]>([]);
   const [newAllergy, setNewAllergy] = useState('');
   const [weightUpdatedAt, setWeightUpdatedAt] = useState<string>('');
+  const [savedProfile, setSavedProfile] = useState<HealthProfile | null>(null);
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; msg: string } | null>(null);
@@ -57,27 +80,24 @@ export function NutritionProfilePage() {
     (async () => {
       setLoading(true);
       try {
-        const hp: HealthProfile = await healthProfileApi.getByUser(user.id);
+        const hp: HealthProfile = await healthProfileApi.getMe();
         if (!active) return;
-        setHasProfile(true);
+        setSavedProfile(hp);
         setDob(hp.date_of_birth || '');
         setSex(hp.sex || '');
-        setHeightCm(hp.height_cm ? String(hp.height_cm) : '');
-        setWeightKg(hp.weight_kg ? String(hp.weight_kg) : '');
+        setHeightCm(hp.height_cm != null ? String(hp.height_cm) : '');
+        setWeightKg(hp.weight_kg != null ? String(hp.weight_kg) : '');
         setActivityLevel(hp.activity_level || '');
         setDietaryPreference(hp.dietary_preference || 'normal');
+        setNutritionGoal(hp.nutrition_goal || 'maintenance');
+        const normalizedComorb = (hp.comorbidities || []).map(normalizeComorbidityId);
+        setComorbidities(normalizedComorb.length > 0 ? normalizedComorb : ['type2_diabetes']);
+        setAllergies(hp.allergies || []);
         setWeightUpdatedAt(hp.updated_at ? hp.updated_at.slice(0, 10) : '');
       } catch {
-        if (active) setHasProfile(false);
+        if (active) setSavedProfile(null);
       } finally {
-        if (active) {
-          const prefs = localPrefsAdapter.get(user.id);
-          setNutritionGoal(prefs.nutrition_goal);
-          setComorbidities(prefs.comorbidities);
-          setAllergies(prefs.allergies);
-          if (prefs.weight_updated_at) setWeightUpdatedAt(prefs.weight_updated_at);
-          setLoading(false);
-        }
+        if (active) setLoading(false);
       }
     })();
     return () => {
@@ -95,6 +115,15 @@ export function NutritionProfilePage() {
   const toggleComorbidity = (id: string) => {
     setComorbidities((prev) =>
       prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]
+    );
+  };
+
+  const toggleAllergy = (codeOrName: string) => {
+    const lower = codeOrName.toLowerCase();
+    setAllergies((prev) =>
+      prev.some((a) => a.toLowerCase() === lower)
+        ? prev.filter((a) => a.toLowerCase() !== lower)
+        : [...prev, codeOrName]
     );
   };
 
@@ -125,7 +154,7 @@ export function NutritionProfilePage() {
 
     setSaving(true);
     try {
-      const payload = {
+      const updated = await healthProfileApi.upsertMe({
         date_of_birth: dob || null,
         sex: (sex || null) as SexType | null,
         height_cm: hNum,
@@ -133,25 +162,17 @@ export function NutritionProfilePage() {
         diabetes_type: 'type2',
         activity_level: (activityLevel || null) as ActivityLevelType | null,
         dietary_preference: dietaryPreference === 'normal' ? null : dietaryPreference,
-      };
-
-      if (hasProfile) {
-        await healthProfileApi.update(user.id, payload);
-      } else {
-        await healthProfileApi.create({ ...payload, user_id: user.id });
-        setHasProfile(true);
-      }
-
-      const today = new Date().toISOString().slice(0, 10);
-      localPrefsAdapter.save(user.id, {
         nutrition_goal: nutritionGoal,
         comorbidities,
         allergies,
-        weight_updated_at: today,
       });
-      weightHistoryStorage.addEntry(user.id, { date: today, weight_kg: wNum });
-      setWeightUpdatedAt(today);
-      setFeedback({ type: 'success', msg: 'Đã lưu hồ sơ dinh dưỡng cá nhân thành công.' });
+
+      setSavedProfile(updated);
+      setWeightUpdatedAt(updated.updated_at ? updated.updated_at.slice(0, 10) : '');
+      setFeedback({
+        type: 'success',
+        msg: 'Đã lưu hồ sơ dinh dưỡng lên máy chủ và cập nhật mục tiêu năng lượng (Mifflin-St Jeor).',
+      });
     } catch (err) {
       setFeedback({
         type: 'error',
@@ -172,7 +193,7 @@ export function NutritionProfilePage() {
     >
       <PageHeader
         title="Hồ sơ dinh dưỡng cá nhân"
-        subtitle="Thông tin chuẩn hóa phục vụ tính nhu cầu năng lượng (Mifflin-St Jeor) và lọc an toàn thực phẩm"
+        subtitle="Thông tin chuẩn hóa lưu trên PostgreSQL phục vụ tính nhu cầu năng lượng (Mifflin-St Jeor) và lọc an toàn thực phẩm"
       />
 
       {loading ? (
@@ -193,7 +214,7 @@ export function NutritionProfilePage() {
             <h2 style={{ fontSize: 17, marginBottom: 16 }}>A. Thông tin cá nhân</h2>
             <div className="dc-grid-3">
               <FormField label="Họ và tên">
-                <input className="dc-input" value={user.full_name} disabled />
+                <input className="dc-input" value={user.full_name || ''} disabled />
               </FormField>
               <FormField label="Ngày sinh" required error={errors.dob}>
                 <input
@@ -218,9 +239,9 @@ export function NutritionProfilePage() {
             </div>
           </section>
 
-          {/* B. Thể trạng */}
+          {/* B. Thể trạng & Chỉ số năng lượng từ Backend */}
           <section className="dc-card">
-            <h2 style={{ fontSize: 17, marginBottom: 16 }}>B. Thể trạng & Chỉ số BMI</h2>
+            <h2 style={{ fontSize: 17, marginBottom: 16 }}>B. Thể trạng, BMI & Nhu cầu năng lượng</h2>
             <div className="dc-grid-4">
               <FormField label="Chiều cao (cm)" required error={errors.heightCm}>
                 <input
@@ -244,15 +265,48 @@ export function NutritionProfilePage() {
               </FormField>
               <FormField label="BMI tính từ hồ sơ" hint="kg / m²">
                 <div className="dc-input" style={{ display: 'flex', alignItems: 'center', background: 'var(--dc-bg)' }}>
-                  <strong>{computedBmi ?? 'Chưa đủ dữ liệu'}</strong>
+                  <strong>{savedProfile?.bmi ?? computedBmi ?? 'Chưa đủ dữ liệu'}</strong>
                 </div>
               </FormField>
-              <FormField label="Ngày cập nhật cân nặng">
+              <FormField label="Ngày cập nhật hồ sơ">
                 <div className="dc-input" style={{ display: 'flex', alignItems: 'center', background: 'var(--dc-bg)' }}>
                   {weightUpdatedAt || 'Chưa cập nhật'}
                 </div>
               </FormField>
             </div>
+
+            {savedProfile && (
+              <div className="dc-grid-3" style={{ marginTop: 16 }}>
+                <StatCard
+                  label="BMR (Chuyển hóa cơ bản)"
+                  value={savedProfile.bmr_kcal != null ? Math.round(savedProfile.bmr_kcal) : 'Chưa đủ dữ liệu'}
+                  unit={savedProfile.bmr_kcal != null ? 'kcal/ngày' : undefined}
+                  subtitle="Tính theo công thức Mifflin-St Jeor"
+                />
+                <StatCard
+                  label="TDEE (Tổng tiêu hao)"
+                  value={savedProfile.tdee_kcal != null ? Math.round(savedProfile.tdee_kcal) : 'Chưa đủ dữ liệu'}
+                  unit={savedProfile.tdee_kcal != null ? 'kcal/ngày' : undefined}
+                  subtitle="Đã nhân hệ số vận động"
+                  tone="secondary"
+                />
+                <StatCard
+                  label="Mục tiêu năng lượng (Target)"
+                  value={
+                    savedProfile.target_energy_kcal != null
+                      ? Math.round(savedProfile.target_energy_kcal)
+                      : 'Chưa đủ dữ liệu'
+                  }
+                  unit={savedProfile.target_energy_kcal != null ? 'kcal/ngày' : undefined}
+                  subtitle={
+                    savedProfile.nutrition_goal === 'weight_loss'
+                      ? 'Mục tiêu giảm cân an toàn'
+                      : 'Mục tiêu duy trì cân nặng'
+                  }
+                  tone="primary"
+                />
+              </div>
+            )}
           </section>
 
           {/* C & D. Mức độ vận động & Mục tiêu */}
@@ -270,6 +324,7 @@ export function NutritionProfilePage() {
                   <option value="light">Vận động nhẹ (Light - đi bộ 1–3 ngày/tuần)</option>
                   <option value="moderate">Vận động vừa (Moderate - tập 3–5 ngày/tuần)</option>
                   <option value="active">Vận động nhiều (Active - tập 6–7 ngày/tuần)</option>
+                  <option value="very_active">Vận động rất nhiều (Very Active)</option>
                 </select>
               </FormField>
             </section>
@@ -278,12 +333,12 @@ export function NutritionProfilePage() {
               <h2 style={{ fontSize: 17, marginBottom: 14 }}>D. Mục tiêu dinh dưỡng</h2>
               <FormField
                 label="Mục tiêu chính"
-                hint="Lưu cục bộ trên thiết bị để điều chỉnh ngưỡng năng lượng gợi ý"
+                hint="Lưu trên Backend để tự động tính target_energy_kcal"
               >
                 <select
                   className="dc-select"
                   value={nutritionGoal}
-                  onChange={(e) => setNutritionGoal(e.target.value as 'weight_loss' | 'maintenance')}
+                  onChange={(e) => setNutritionGoal(e.target.value as NutritionGoalType)}
                 >
                   <option value="maintenance">Duy trì cân nặng & ổn định đường huyết</option>
                   <option value="weight_loss">Giảm cân an toàn (Weight loss)</option>
@@ -296,7 +351,7 @@ export function NutritionProfilePage() {
           <section className="dc-card">
             <h2 style={{ fontSize: 17, marginBottom: 8 }}>E. Bệnh lý & Bệnh đồng mắc</h2>
             <p style={{ fontSize: 13.5, color: 'var(--dc-text-secondary)', marginBottom: 14 }}>
-              Hệ thống kiểm tra bệnh đồng mắc để siết natri (tăng huyết áp) hoặc tạm dừng tạo thực đơn tự động (bệnh thận mạn CKD).
+              Hệ thống kiểm tra bệnh đồng mắc trên máy chủ để cảnh báo kiểm soát natri (tăng huyết áp) hoặc tạm dừng tạo thực đơn tự động (bệnh thận mạn CKD).
             </p>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
               {COMORBIDITY_OPTIONS.map((c) => {
@@ -331,13 +386,41 @@ export function NutritionProfilePage() {
           {/* F & G. Dị ứng & Chế độ ăn */}
           <div className="dc-grid-2">
             <section className="dc-card">
-              <h2 style={{ fontSize: 17, marginBottom: 14 }}>F. Dị ứng thực phẩm</h2>
+              <h2 style={{ fontSize: 17, marginBottom: 10 }}>F. Dị ứng thực phẩm</h2>
+              <p style={{ fontSize: 12.5, color: 'var(--dc-text-secondary)', marginBottom: 12 }}>
+                Chọn nhanh nhóm dị nguyên chuẩn hóa hoặc nhập thêm từ khóa riêng:
+              </p>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 12 }}>
+                {STANDARD_ALLERGENS.map((item) => {
+                  const selected = allergies.some((a) => a.toLowerCase() === item.code);
+                  return (
+                    <button
+                      key={item.code}
+                      type="button"
+                      onClick={() => toggleAllergy(item.code)}
+                      style={{
+                        padding: '5px 10px',
+                        borderRadius: 999,
+                        fontSize: 12.5,
+                        cursor: 'pointer',
+                        border: `1px solid ${selected ? 'var(--dc-danger)' : 'var(--dc-border)'}`,
+                        background: selected ? '#FEF2F2' : 'var(--dc-surface)',
+                        color: selected ? 'var(--dc-danger)' : 'var(--dc-text-secondary)',
+                        fontWeight: selected ? 600 : 400,
+                      }}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                })}
+              </div>
+
               <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
                 <input
                   className="dc-input"
                   value={newAllergy}
                   onChange={(e) => setNewAllergy(e.target.value)}
-                  placeholder="Ví dụ: Hải sản, Đậu phộng, Trứng..."
+                  placeholder="Thêm dị ứng khác (vd: hành, nấm)..."
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();

@@ -5,18 +5,18 @@ import { AppLayout } from '../../components/layout/AppLayout';
 import { useAuth } from '../../context/AuthContext';
 import { PrimaryButton, SecondaryButton } from '../../components/ui/Buttons';
 import { StatCard, WarningCard } from '../../components/ui/Cards';
-import { EmptyState } from '../../components/ui/Feedback';
+import { EmptyState, LoadingSkeleton } from '../../components/ui/Feedback';
 import { PageHeader } from '../../components/ui/NavigationUI';
 import { StatusBadge } from '../../components/ui/Badges';
 import {
-  estimateReferenceDailyKcal,
   healthProfileApi,
-  localPrefsAdapter,
-  mealPlanStorage,
-  sumMealSodium,
+  nutritionBackendApi,
   VERIFIED_RAG_REFERENCES,
 } from '../../services/nutritionApi';
-import type { DailyMealPlan, HealthProfile } from '../../types/nutrition';
+import type {
+  DailyRecommendationsResponse,
+  HealthProfile,
+} from '../../types/nutrition';
 
 function todayStr(): string {
   const d = new Date();
@@ -28,26 +28,45 @@ export function AIExplanationPage() {
   const navigate = useNavigate();
   const today = todayStr();
 
+  const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<HealthProfile | null>(null);
-  const [plan, setPlan] = useState<DailyMealPlan | null>(null);
+  const [dailyPlan, setDailyPlan] = useState<DailyRecommendationsResponse | null>(null);
 
   useEffect(() => {
     if (!user) return;
-    setPlan(mealPlanStorage.getByDate(user.id, today));
-    healthProfileApi.getByUser(user.id).then(setProfile).catch(() => setProfile(null));
+    let active = true;
+    setLoading(true);
+    Promise.all([
+      healthProfileApi.getMe().catch(() => null),
+      nutritionBackendApi.getToday(today).catch(() => null),
+    ])
+      .then(([hp, todayRecs]) => {
+        if (!active) return;
+        setProfile(hp);
+        setDailyPlan(todayRecs);
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [user, today]);
 
   if (!user) return null;
-  const prefs = localPrefsAdapter.get(user.id);
-  const targetKcal = estimateReferenceDailyKcal(profile, prefs.nutrition_goal);
 
-  const mealValues = plan ? Object.values(plan.meals).filter(Boolean) : [];
-  const totalKcal = Math.round(mealValues.reduce((s, m) => s + (m?.total_energy_kcal ?? 0), 0));
-  const totalCarb = Number(mealValues.reduce((s, m) => s + (m?.total_carbohydrate_g ?? 0), 0).toFixed(1));
-  const totalProtein = Number(mealValues.reduce((s, m) => s + (m?.total_protein_g ?? 0), 0).toFixed(1));
-  const totalFat = Number(mealValues.reduce((s, m) => s + (m?.total_fat_g ?? 0), 0).toFixed(1));
-  const totalFiber = Number(mealValues.reduce((s, m) => s + (m?.total_fiber_g ?? 0), 0).toFixed(1));
-  const totalSodium = mealValues.reduce((s, m) => s + (m ? sumMealSodium(m.items) : 0), 0);
+  const targetKcal =
+    profile?.target_energy_kcal != null ? Math.round(profile.target_energy_kcal) : null;
+  const mealValues = dailyPlan?.meals ?? [];
+  const summary = dailyPlan?.daily_summary;
+  const totalKcal = Math.round(summary?.total_energy_kcal ?? 0);
+  const totalCarb = Number((summary?.total_carbohydrate_g ?? 0).toFixed(1));
+  const totalProtein = Number((summary?.total_protein_g ?? 0).toFixed(1));
+  const totalFat = Number((summary?.total_fat_g ?? 0).toFixed(1));
+  const totalFiber = Number((summary?.total_fiber_g ?? 0).toFixed(1));
+  const totalSodium = Math.round(summary?.total_sodium_mg ?? 0);
+  const profileAllergies = profile?.allergies ?? [];
+  const latestGeneratedAt = mealValues[0]?.generated_at;
 
   return (
     <AppLayout
@@ -67,7 +86,9 @@ export function AIExplanationPage() {
         }
       />
 
-      {!plan || mealValues.length === 0 ? (
+      {loading ? (
+        <LoadingSkeleton rows={4} />
+      ) : mealValues.length === 0 ? (
         <EmptyState
           icon={<Bot size={26} />}
           title="Chưa có thực đơn để giải thích"
@@ -84,9 +105,25 @@ export function AIExplanationPage() {
               <StatusBadge tone="info">Nguồn giải thích: Engine + RAG Adapter</StatusBadge>
             </div>
             <div className="dc-grid-3">
-              <StatCard label="Ngày thực đơn" value={plan.date} subtitle={`Tạo lúc: ${new Date(plan.generated_at).toLocaleString('vi-VN')}`} />
-              <StatCard label="Chế độ & Mục tiêu" value={plan.applied_preference || 'Cân bằng ĐTĐ'} subtitle={`Mục tiêu: ${prefs.nutrition_goal === 'weight_loss' ? 'Giảm cân' : 'Duy trì'}`} />
-              <StatCard label="Tổng năng lượng từ Engine" value={`${totalKcal} kcal`} subtitle={`Mục tiêu tham khảo: ${targetKcal ?? 'Chưa đủ hồ sơ'} kcal`} />
+              <StatCard
+                label="Ngày thực đơn"
+                value={dailyPlan?.date || today}
+                subtitle={
+                  latestGeneratedAt
+                    ? `Tạo lúc: ${new Date(latestGeneratedAt).toLocaleString('vi-VN')}`
+                    : undefined
+                }
+              />
+              <StatCard
+                label="Chế độ & Mục tiêu"
+                value={profile?.dietary_preference || 'Cân bằng ĐTĐ'}
+                subtitle={`Mục tiêu: ${profile?.nutrition_goal === 'weight_loss' ? 'Giảm cân' : 'Duy trì'}`}
+              />
+              <StatCard
+                label="Tổng năng lượng từ Engine"
+                value={`${totalKcal} kcal`}
+                subtitle={`Mục tiêu tham khảo: ${targetKcal ?? 'Chưa đủ hồ sơ'} kcal`}
+              />
             </div>
           </section>
 
@@ -98,16 +135,16 @@ export function AIExplanationPage() {
                 <strong>Mục tiêu năng lượng:</strong> Dựa trên cấu trúc Đĩa ăn Đái tháo đường (Plate Method) gồm {mealValues.length} bữa với tổng {totalKcal} kcal (không để AI tự ý thay đổi định lượng).
               </li>
               <li>
-                <strong>Phù hợp chế độ ăn:</strong> Áp dụng chế độ <strong>{plan.applied_preference || 'Cân bằng ĐTĐ'}</strong>; ưu tiên thực phẩm có chỉ số đường huyết (GI) thấp–trung bình và giàu chất xơ ({totalFiber}g).
+                <strong>Phù hợp chế độ ăn:</strong> Áp dụng chế độ <strong>{profile?.dietary_preference || 'Cân bằng ĐTĐ'}</strong>; ưu tiên thực phẩm có chỉ số đường huyết (GI) thấp–trung bình và giàu chất xơ ({totalFiber}g).
               </li>
               <li>
                 <strong>Loại bỏ thực phẩm gây dị ứng:</strong>{' '}
-                {prefs.allergies.length > 0
-                  ? `Đã loại bỏ 100% món chứa hoặc liên quan tới: ${prefs.allergies.join(', ')}.`
+                {profileAllergies.length > 0
+                  ? `Đã loại bỏ 100% món chứa hoặc liên quan tới: ${profileAllergies.join(', ')}.`
                   : 'Không có dị ứng thực phẩm nào được khai báo.'}
               </li>
               <li>
-                <strong>Kiểm soát ràng buộc dinh dưỡng:</strong> Tổng Carb {totalCarb}g, Đạm {totalProtein}g, Béo {totalFat}g, Natri ước tính {totalSodium}mg.
+                <strong>Kiểm soát ràng buộc dinh dưỡng:</strong> Tổng Carb {totalCarb}g, Đạm {totalProtein}g, Béo {totalFat}g, Natri {totalSodium}mg.
               </li>
             </ul>
           </section>
@@ -115,8 +152,8 @@ export function AIExplanationPage() {
           {/* C. Nutrition Reasoning (3 tách biệt rõ ràng) */}
           <section className="dc-card" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
             <h2 style={{ fontSize: 17 }}>C. Phân tách trách nhiệm: Engine — RAG — LLM</h2>
-            <WarningCard level="info" title="Trạng thái kết nối RAG Explanation trên nhánh main">
-              Nhánh <code>main</code> hiện cung cấp API tạo thực đơn (<code>POST /api/v1/nutrition/recommend</code>). Phần diễn giải ngôn ngữ tự nhiên đang chạy qua Adapter chuẩn bị sẵn để ghép nối endpoint <code>/nutrition/explain</code> từ nhánh AI, đảm bảo giữ nguyên 100% số liệu của Engine.
+            <WarningCard level="info" title="Trạng thái kết nối RAG Explanation">
+              Hệ thống hiện đọc số liệu thực đơn trực tiếp từ PostgreSQL (<code>GET /api/v1/nutrition/recommendations/today</code>). Phần diễn giải ngôn ngữ tự nhiên đang chạy qua danh mục nguồn trích dẫn xác minh sẵn để chuẩn bị ghép nối endpoint <code>/nutrition/explain</code> từ nhánh AI.
             </WarningCard>
 
             <div className="dc-grid-3">
