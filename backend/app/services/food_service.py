@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.models.allergen import Allergen
 from app.models.food import Food
-from app.schemas.food import FoodCreate, FoodUpdate
+from app.schemas.food import FoodAlternativeResponse, FoodCreate, FoodResponse, FoodUpdate
 
 
 def _resolve_allergens_by_codes(db: Session, codes: Optional[List[str]]) -> List[Allergen]:
@@ -111,6 +111,102 @@ def delete_food(db: Session, food_id: uuid.UUID) -> bool:
     db.delete(food)
     db.commit()
     return True
+
+
+def get_food_alternatives(
+    db: Session,
+    food_id: uuid.UUID,
+    user_id: uuid.UUID,
+    limit: int = 5,
+    dietary_preference: Optional[str] = None,
+) -> Optional[List[FoodAlternativeResponse]]:
+    """Find safe same-category alternative foods filtered by user allergies/diet and ranked by Kcal & GI closeness."""
+    from app.schemas.nutrition import MealRecommendationRequest
+    from app.services.health_profile_service import get_profile_by_user_id
+    from app.services.nutrition_engine import ConstraintEngine
+
+    original = get_food_by_id(db, food_id)
+    if not original:
+        return None
+
+    health_profile = get_profile_by_user_id(db, user_id)
+    effective_pref = dietary_preference or (
+        health_profile.dietary_preference if health_profile else None
+    )
+    profile_allergies = (
+        list(health_profile.allergies or []) if health_profile else []
+    )
+
+    stmt = (
+        select(Food)
+        .where(Food.category == original.category, Food.id != original.id)
+        .order_by(Food.name)
+    )
+    same_category_foods = list(db.scalars(stmt).all())
+
+    filter_request = MealRecommendationRequest(
+        user_id=user_id,
+        meal_type="lunch",
+        dietary_preference=effective_pref,
+        excluded_food_ids=[original.id],
+        excluded_allergens=profile_allergies or None,
+    )
+    safe_candidates = ConstraintEngine.filter_foods(
+        foods=same_category_foods,
+        request=filter_request,
+        health_profile=health_profile,
+    )
+
+    orig_kcal = float(original.energy_kcal)
+    orig_gi = float(original.glycemic_index) if original.glycemic_index is not None else None
+
+    def _rank_key(cand: Food) -> tuple:
+        cand_kcal = float(cand.energy_kcal)
+        kcal_gap = abs(cand_kcal - orig_kcal)
+        cand_gi = float(cand.glycemic_index) if cand.glycemic_index is not None else None
+
+        if orig_gi is not None and cand_gi is not None:
+            # Prefer lower or equal GI; penalize higher GI more strongly
+            gi_penalty = (cand_gi - orig_gi) * 3.0 if cand_gi > orig_gi else abs(cand_gi - orig_gi) * 0.5
+        else:
+            gi_penalty = 0.0
+        return (round(gi_penalty + kcal_gap, 2), round(kcal_gap, 2), cand.name)
+
+    ranked = sorted(safe_candidates, key=_rank_key)[:limit]
+
+    results: List[FoodAlternativeResponse] = []
+    for cand in ranked:
+        kcal_diff = round(float(cand.energy_kcal) - orig_kcal, 1)
+        cand_gi = float(cand.glycemic_index) if cand.glycemic_index is not None else None
+        gi_diff = (
+            round(cand_gi - orig_gi, 1)
+            if orig_gi is not None and cand_gi is not None
+            else None
+        )
+
+        kcal_sign = "+" if kcal_diff > 0 else ""
+        parts = [f"Cùng nhóm {original.category}, chênh lệch năng lượng {kcal_sign}{kcal_diff:.1f} kcal"]
+        if gi_diff is not None:
+            if gi_diff < 0:
+                parts.append(f"GI thấp hơn {abs(gi_diff):.0f} điểm (tốt cho kiểm soát đường huyết)")
+            elif gi_diff == 0:
+                parts.append("GI tương đương")
+            else:
+                parts.append(f"GI cao hơn +{gi_diff:.0f} điểm")
+        else:
+            parts.append("an toàn theo ràng buộc dị ứng & chế độ ăn")
+
+        base_data = FoodResponse.model_validate(cand).model_dump()
+        results.append(
+            FoodAlternativeResponse(
+                **base_data,
+                kcal_diff=kcal_diff,
+                gi_diff=gi_diff,
+                similarity_reason="; ".join(parts),
+            )
+        )
+
+    return results
 
 
 SAMPLE_TEST_FOODS = [

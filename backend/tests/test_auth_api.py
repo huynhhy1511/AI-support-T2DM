@@ -31,6 +31,8 @@ def test_auth_register_login_and_me_lifecycle():
     assert reg_res.status_code == 201, reg_res.text
     reg_data = reg_res.json()
     assert reg_data["email"] == email
+    assert reg_data["display_name"] == "Auth Test User"
+    assert reg_data["full_name"] == "Auth Test User"
     assert "password_hash" not in reg_data
     user_id = reg_data["id"]
 
@@ -53,6 +55,8 @@ def test_auth_register_login_and_me_lifecycle():
     assert login_res.status_code == 200, login_res.text
     login_data = login_res.json()
     assert login_data["token_type"] == "bearer"
+    assert login_data["user"]["full_name"] == "Auth Test User"
+    assert login_data["user"]["display_name"] == "Auth Test User"
     token = login_data["access_token"]
     headers = {"Authorization": f"Bearer {token}"}
 
@@ -62,6 +66,8 @@ def test_auth_register_login_and_me_lifecycle():
         assert me_res.status_code == 200
         assert me_res.json()["id"] == user_id
         assert me_res.json()["email"] == email
+        assert me_res.json()["full_name"] == "Auth Test User"
+        assert me_res.json()["display_name"] == "Auth Test User"
     finally:
         client.delete(f"/api/v1/users/{user_id}", headers=headers)
 

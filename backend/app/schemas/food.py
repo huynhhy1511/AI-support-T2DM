@@ -104,3 +104,9 @@ class FoodResponse(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class FoodAlternativeResponse(FoodResponse):
+    kcal_diff: float
+    gi_diff: Optional[float] = None
+    similarity_reason: str

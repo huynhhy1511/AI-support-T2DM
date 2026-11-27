@@ -232,6 +232,11 @@ class ConstraintEngine:
                 elif any(mk in name_lower for mk in MEAT_AND_SEAFOOD_KEYWORDS):
                     continue
 
+            # Rule 3C: Low-sodium dietary preference
+            elif pref_lower in ["low_sodium", "ít muối", "it_muoi"]:
+                if food.sodium_mg is not None and float(food.sodium_mg) > 500.0:
+                    continue
+
             # Rule 4: Extreme sugar filter for standalone staples/proteins
             # Type 2 diabetes guideline recommends avoiding foods with excessive added sugar
             sugar = float(food.sugar_g or 0)
@@ -493,13 +498,30 @@ class MealComposer:
             for item_tuple in selected_tuples
         ]
 
-        # 3. Calculate summary nutrients (already scaled by multiplier)
+        # 3-5. Calculate totals, safety evaluation, and meal summary via shared helper
+        meal_eval, eval_notes = cls.evaluate_meal_safety(
+            selected_foods=selected_foods,
+            meal_type=meal_type,
+            custom_target=custom_target,
+        )
+        safety_notes.extend(eval_notes)
+
+        return selected_foods, meal_eval, safety_notes
+
+    @staticmethod
+    def evaluate_meal_safety(
+        selected_foods: List[RecommendedFoodItem],
+        meal_type: MealType,
+        custom_target: Optional[NutritionTarget] = None,
+    ) -> Tuple[str, List[str]]:
+        """Evaluate meal totals and emit clinical glycemic & cardiovascular safety notes."""
+        notes: List[str] = []
         total_energy = round(sum(f.energy_kcal for f in selected_foods), 2)
         total_carb = round(sum(f.carbohydrate_g for f in selected_foods), 2)
         total_protein = round(sum(f.protein_g for f in selected_foods), 2)
         total_fiber = round(sum(f.fiber_g or 0 for f in selected_foods), 2)
 
-        # 4. Safety evaluation on Carbohydrates
+        # Safety evaluation on Carbohydrates
         max_carb_allowed = 55.0  # Default safe upper bound for main meals (ADA recommendation)
         if custom_target and custom_target.max_carbohydrate_g:
             max_carb_allowed = custom_target.max_carbohydrate_g
@@ -507,17 +529,17 @@ class MealComposer:
             max_carb_allowed = 20.0
 
         if total_carb > max_carb_allowed:
-            safety_notes.append(
+            notes.append(
                 f"Lưu ý: Bữa ăn có tổng lượng carbohydrate {total_carb:.1f}g (vượt ngưỡng gợi ý {max_carb_allowed:.1f}g). "
                 f"Khuyến nghị cân nhắc giảm khẩu phần tinh bột hoặc tăng vận động nhẹ sau ăn nếu chỉ số đường huyết trước ăn đang cao."
             )
 
         if total_fiber < 4.0:
-            safety_notes.append(
+            notes.append(
                 "Lượng chất xơ trong bữa ăn còn thấp (< 4g). Hãy bổ sung thêm rau xanh luộc hoặc salad để làm chậm hấp thu đường."
             )
 
-        # 5. Cardiovascular safety notes (Sodium & Saturated Fat)
+        # Cardiovascular safety notes (Sodium & Saturated Fat)
         total_sodium = round(
             sum(f.sodium_mg for f in selected_foods if f.sodium_mg is not None), 2
         )
@@ -526,13 +548,13 @@ class MealComposer:
         )
 
         if total_sodium > 700.0:
-            safety_notes.append(
+            notes.append(
                 f"Cảnh báo tim mạch: Tổng lượng natri bữa ăn ({total_sodium:.0f}mg) vượt ngưỡng 700mg/bữa. "
                 f"Khuyến nghị hạn chế muối và nước chấm để kiểm soát huyết áp."
             )
 
         if total_sat_fat > 7.0:
-            safety_notes.append(
+            notes.append(
                 f"Cảnh báo tim mạch: Tổng chất béo bão hòa ({total_sat_fat:.1f}g) vượt ngưỡng 7g/bữa. "
                 f"Khuyến nghị giảm mỡ động vật để bảo vệ tim mạch."
             )
@@ -543,8 +565,7 @@ class MealComposer:
             f"Carbohydrate {total_carb:.1f}g, Đạm {total_protein:.1f}g, "
             f"Chất xơ {total_fiber:.1f}g. Giữ ổn định chỉ số đường huyết sau bữa ăn."
         )
-
-        return selected_foods, meal_eval, safety_notes
+        return meal_eval, notes
 
     @staticmethod
     def _calculate_serving_multiplier(

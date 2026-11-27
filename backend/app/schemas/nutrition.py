@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -50,6 +50,8 @@ class MealRecommendationResponse(BaseModel):
     recommendation_id: uuid.UUID
     user_id: uuid.UUID
     meal_type: str
+    status: Literal["generated", "abstained"] = "generated"
+    reason_code: Optional[str] = None
     algorithm_version: str
     generated_at: datetime
     items: List[RecommendedFoodItem]
@@ -58,9 +60,56 @@ class MealRecommendationResponse(BaseModel):
     total_protein_g: float
     total_fat_g: float
     total_fiber_g: float
+    total_sodium_mg: Optional[float] = None
+    total_saturated_fat_g: Optional[float] = None
     meal_balance_evaluation: str
     safety_notes: List[str]
     clinical_safety_disclaimer: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class FoodSubstitutionRequest(BaseModel):
+    original_food_id: uuid.UUID
+    replacement_food_id: uuid.UUID
+    serving_g: Optional[float] = Field(
+        None, gt=0, le=2000, description="Khẩu phần thay thế mong muốn tính theo gram (tùy chọn)"
+    )
+
+
+class DailyNutritionSummary(BaseModel):
+    total_energy_kcal: float = 0.0
+    total_carbohydrate_g: float = 0.0
+    total_protein_g: float = 0.0
+    total_fat_g: float = 0.0
+    total_fiber_g: float = 0.0
+    total_sodium_mg: float = 0.0
+    total_saturated_fat_g: float = 0.0
+    meals_count: int = 0
+
+
+class DailyRecommendationsResponse(BaseModel):
+    date: date
+    user_id: uuid.UUID
+    meals: List[MealRecommendationResponse]
+    daily_summary: DailyNutritionSummary
+
+
+class SafetyAlertSchema(BaseModel):
+    code: str
+    level: Literal["info", "warning", "error", "critical"]
+    title: str
+    message: str
+    action_guidance: str
+    details: List[str] = Field(default_factory=list)
+
+
+class SafetyAlertsResponse(BaseModel):
+    user_id: uuid.UUID
+    has_blocking_condition: bool
+    is_profile_complete: bool
+    bmi: Optional[float] = None
+    bmi_category: Optional[str] = None
+    target_energy_kcal: Optional[float] = None
+    alerts: List[SafetyAlertSchema]
 

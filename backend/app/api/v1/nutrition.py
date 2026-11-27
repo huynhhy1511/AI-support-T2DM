@@ -1,5 +1,6 @@
 import uuid
-from typing import Any, Dict, List
+from datetime import date
+from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
@@ -8,8 +9,11 @@ from app.api.deps import ensure_user_ownership, get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.nutrition import (
+    DailyRecommendationsResponse,
+    FoodSubstitutionRequest,
     MealRecommendationRequest,
     MealRecommendationResponse,
+    SafetyAlertsResponse,
 )
 from app.services import nutrition_service, user_service
 
@@ -42,6 +46,44 @@ def recommend_meal_endpoint(
         )
 
     return nutrition_service.generate_recommendation(db, request)
+
+
+@router.get(
+    "/recommendations/today",
+    response_model=DailyRecommendationsResponse,
+    summary="Get Daily Meal Recommendations",
+    description="Return the latest recommendation per meal type for target_date (defaults to today) with daily summary totals.",
+)
+def get_today_recommendations_endpoint(
+    target_date: Optional[date] = Query(
+        None, description="Target date in YYYY-MM-DD format (defaults to today UTC)"
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> DailyRecommendationsResponse:
+    return nutrition_service.get_daily_recommendations(
+        db=db, user_id=current_user.id, target_date=target_date
+    )
+
+
+@router.post(
+    "/recommendations/{recommendation_id}/substitutions",
+    response_model=MealRecommendationResponse,
+    summary="Substitute Food Item in Recommendation",
+    description="Replace a food item in an existing recommendation after ownership, allergy, and safety validation.",
+)
+def substitute_food_endpoint(
+    recommendation_id: uuid.UUID,
+    payload: FoodSubstitutionRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MealRecommendationResponse:
+    return nutrition_service.substitute_food_in_recommendation(
+        db=db,
+        recommendation_id=recommendation_id,
+        current_user_id=current_user.id,
+        payload=payload,
+    )
 
 
 @router.get(
@@ -79,4 +121,17 @@ def get_user_recommendations_endpoint(
         }
         for r in records
     ]
+
+
+@router.get(
+    "/safety-alerts",
+    response_model=SafetyAlertsResponse,
+    summary="Get Clinical Safety Alerts",
+    description="Evaluate active clinical safety alerts (missing fields, CKD block, hypertension sodium limit, BMI category) for the authenticated user.",
+)
+def get_nutrition_safety_alerts_endpoint(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SafetyAlertsResponse:
+    return nutrition_service.evaluate_safety_alerts(db, current_user.id)
 

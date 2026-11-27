@@ -124,3 +124,83 @@ def test_invalid_health_profile_metrics():
         assert res.status_code == 422
     finally:
         client.delete(f"/api/v1/users/{user_id}", headers=headers)
+
+
+def test_health_profile_me_upsert_completeness_and_energy_calculator():
+    """Verify /health-profiles/me, /completeness, and automatic Mifflin-St Jeor BMR/TDEE/target_energy calculation."""
+    user_id, headers = _register_and_login("hp_me")
+    try:
+        # 1. Before profile exists: GET /me -> 404, GET /me/completeness -> incomplete with all 5 fields
+        res_missing = client.get("/api/v1/health-profiles/me", headers=headers)
+        assert res_missing.status_code == 404
+
+        comp_before = client.get(
+            "/api/v1/health-profiles/me/completeness", headers=headers
+        )
+        assert comp_before.status_code == 200
+        comp_before_data = comp_before.json()
+        assert comp_before_data["is_complete"] is False
+        assert set(comp_before_data["missing_fields"]) == {
+            "date_of_birth",
+            "sex",
+            "height_cm",
+            "weight_kg",
+            "activity_level",
+        }
+        assert comp_before_data["target_energy_kcal"] is None
+
+        # 2. PUT /me creates profile and computes BMR/TDEE/target_energy_kcal
+        upsert_create = client.put(
+            "/api/v1/health-profiles/me",
+            json={
+                "date_of_birth": "1990-01-15",
+                "sex": "male",
+                "height_cm": 170.0,
+                "weight_kg": 70.0,
+                "activity_level": "moderate",
+                "nutrition_goal": "maintenance",
+                "comorbidities": ["hypertension"],
+                "allergies": ["shellfish", "peanut"],
+            },
+            headers=headers,
+        )
+        assert upsert_create.status_code == 200, upsert_create.text
+        created = upsert_create.json()
+        assert created["user_id"] == user_id
+        assert created["nutrition_goal"] == "maintenance"
+        assert created["comorbidities"] == ["hypertension"]
+        assert created["allergies"] == ["shellfish", "peanut"]
+        assert created["bmr_kcal"] is not None and created["bmr_kcal"] > 0
+        assert created["tdee_kcal"] == round(created["bmr_kcal"] * 1.55, 1)
+        assert created["target_energy_kcal"] == created["tdee_kcal"]
+
+        # 3. GET /me & GET /me/completeness now return complete profile
+        get_me = client.get("/api/v1/health-profiles/me", headers=headers)
+        assert get_me.status_code == 200
+        assert get_me.json()["id"] == created["id"]
+
+        comp_after = client.get(
+            "/api/v1/health-profiles/me/completeness", headers=headers
+        )
+        assert comp_after.status_code == 200
+        comp_after_data = comp_after.json()
+        assert comp_after_data["is_complete"] is True
+        assert comp_after_data["missing_fields"] == []
+        assert comp_after_data["bmi"] == 24.22
+        assert comp_after_data["target_energy_kcal"] == created["target_energy_kcal"]
+
+        # 4. PUT /me updates nutrition_goal to weight_loss -> reduces target by 400 kcal (above floor)
+        upsert_update = client.put(
+            "/api/v1/health-profiles/me",
+            json={"nutrition_goal": "weight_loss"},
+            headers=headers,
+        )
+        assert upsert_update.status_code == 200
+        updated = upsert_update.json()
+        assert updated["nutrition_goal"] == "weight_loss"
+        assert updated["target_energy_kcal"] == round(
+            max(1400.0, updated["tdee_kcal"] - 400.0), 1
+        )
+    finally:
+        client.delete(f"/api/v1/users/{user_id}", headers=headers)
+
