@@ -50,6 +50,8 @@ class MealRecommendationResponse(BaseModel):
     recommendation_id: uuid.UUID
     user_id: uuid.UUID
     meal_type: str
+    status: Literal["generated", "abstained"] = "generated"
+    reason_code: Optional[str] = None
     algorithm_version: str
     generated_at: datetime
     items: List[RecommendedFoodItem]
@@ -63,4 +65,23 @@ class MealRecommendationResponse(BaseModel):
     clinical_safety_disclaimer: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class SafetyAlertSchema(BaseModel):
+    code: str
+    level: Literal["info", "warning", "error", "critical"]
+    title: str
+    message: str
+    action_guidance: str
+    details: List[str] = Field(default_factory=list)
+
+
+class SafetyAlertsResponse(BaseModel):
+    user_id: uuid.UUID
+    has_blocking_condition: bool
+    is_profile_complete: bool
+    bmi: Optional[float] = None
+    bmi_category: Optional[str] = None
+    target_energy_kcal: Optional[float] = None
+    alerts: List[SafetyAlertSchema]
 

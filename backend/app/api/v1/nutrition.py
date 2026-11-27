@@ -10,6 +10,7 @@ from app.models.user import User
 from app.schemas.nutrition import (
     MealRecommendationRequest,
     MealRecommendationResponse,
+    SafetyAlertsResponse,
 )
 from app.services import nutrition_service, user_service
 
@@ -79,4 +80,17 @@ def get_user_recommendations_endpoint(
         }
         for r in records
     ]
+
+
+@router.get(
+    "/safety-alerts",
+    response_model=SafetyAlertsResponse,
+    summary="Get Clinical Safety Alerts",
+    description="Evaluate active clinical safety alerts (missing fields, CKD block, hypertension sodium limit, BMI category) for the authenticated user.",
+)
+def get_nutrition_safety_alerts_endpoint(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> SafetyAlertsResponse:
+    return nutrition_service.evaluate_safety_alerts(db, current_user.id)
 

@@ -311,3 +311,126 @@ def test_recommendation_structured_allergen_filtering_api():
     finally:
         client.delete(f"/api/v1/users/{user_id}", headers=headers)
 
+
+def test_recommendation_ckd_abstention_and_profile_allergies():
+    """Verify CKD comorbidity triggers HTTP 200 abstained response without DB persistence, and profile allergies filter foods."""
+    from app.db.session import SessionLocal
+    from app.models.food import Food
+    from app.scripts.seed_vn_foods import seed_vn_foods
+
+    db = SessionLocal()
+    try:
+        seed_vn_foods(db)
+    finally:
+        db.close()
+
+    user_id, headers = _register_and_login("ckd_guard")
+    try:
+        # 1. Set profile with CKD comorbidity
+        hp_res = client.put(
+            "/api/v1/health-profiles/me",
+            json={
+                "date_of_birth": "1975-03-10",
+                "sex": "female",
+                "height_cm": 158.0,
+                "weight_kg": 60.0,
+                "activity_level": "light",
+                "comorbidities": ["ckd"],
+                "allergies": ["shellfish", "soy"],
+            },
+            headers=headers,
+        )
+        assert hp_res.status_code == 200
+
+        # 2. Request recommendation -> HTTP 200 abstained, CKD_SPECIALIST_REQUIRED, no DB record saved
+        abstain_res = client.post(
+            "/api/v1/nutrition/recommend",
+            json={"user_id": user_id, "meal_type": "lunch"},
+            headers=headers,
+        )
+        assert abstain_res.status_code == 200, abstain_res.text
+        abstain_data = abstain_res.json()
+        assert abstain_data["status"] == "abstained"
+        assert abstain_data["reason_code"] == "CKD_SPECIALIST_REQUIRED"
+        assert abstain_data["items"] == []
+        assert abstain_data["total_energy_kcal"] == 0.0
+
+        hist_after_abstain = client.get(
+            f"/api/v1/nutrition/recommendations/user/{user_id}", headers=headers
+        )
+        assert hist_after_abstain.status_code == 200
+        assert hist_after_abstain.json() == []
+
+        # 3. Remove CKD (keep allergies=["shellfish", "soy"]) -> generated & respects profile allergies
+        upd_res = client.put(
+            "/api/v1/health-profiles/me",
+            json={"comorbidities": ["hypertension"]},
+            headers=headers,
+        )
+        assert upd_res.status_code == 200
+
+        gen_res = client.post(
+            "/api/v1/nutrition/recommend",
+            json={"user_id": user_id, "meal_type": "lunch"},
+            headers=headers,
+        )
+        assert gen_res.status_code == 200, gen_res.text
+        gen_data = gen_res.json()
+        assert gen_data["status"] == "generated"
+        assert gen_data["reason_code"] is None
+        assert len(gen_data["items"]) >= 2
+
+        db = SessionLocal()
+        try:
+            for item in gen_data["items"]:
+                food = db.get(Food, uuid.UUID(item["food_id"]))
+                assert food is not None
+                codes = {a.code for a in food.allergens}
+                assert not (codes & {"shellfish", "soy"})
+        finally:
+            db.close()
+    finally:
+        client.delete(f"/api/v1/users/{user_id}", headers=headers)
+
+
+def test_nutrition_safety_alerts_endpoint():
+    """Verify GET /nutrition/safety-alerts flags missing fields, CKD block, hypertension, and BMI."""
+    user_id, headers = _register_and_login("safety_alerts")
+    try:
+        # 1. No profile yet -> MISSING_PROFILE_FIELDS
+        res_empty = client.get("/api/v1/nutrition/safety-alerts", headers=headers)
+        assert res_empty.status_code == 200, res_empty.text
+        empty_data = res_empty.json()
+        assert empty_data["is_profile_complete"] is False
+        assert empty_data["has_blocking_condition"] is False
+        assert any(a["code"] == "MISSING_PROFILE_FIELDS" for a in empty_data["alerts"])
+
+        # 2. Complete profile with CKD + hypertension + obese BMI (>= 30)
+        hp_res = client.put(
+            "/api/v1/health-profiles/me",
+            json={
+                "date_of_birth": "1980-05-01",
+                "sex": "male",
+                "height_cm": 165.0,
+                "weight_kg": 90.0,
+                "activity_level": "sedentary",
+                "comorbidities": ["ckd", "hypertension"],
+            },
+            headers=headers,
+        )
+        assert hp_res.status_code == 200
+
+        res_alerts = client.get("/api/v1/nutrition/safety-alerts", headers=headers)
+        assert res_alerts.status_code == 200
+        alerts_data = res_alerts.json()
+        assert alerts_data["is_profile_complete"] is True
+        assert alerts_data["has_blocking_condition"] is True
+        assert alerts_data["bmi_category"] == "obese"
+        codes = {a["code"] for a in alerts_data["alerts"]}
+        assert "CKD_SPECIALIST_REQUIRED" in codes
+        assert "HYPERTENSION_SODIUM_LIMIT" in codes
+        assert "BMI_OBESE" in codes
+    finally:
+        client.delete(f"/api/v1/users/{user_id}", headers=headers)
+
+

@@ -7,6 +7,7 @@ from app.api.deps import ensure_user_ownership, get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.health_profile import (
+    HealthProfileCompletenessResponse,
     HealthProfileCreate,
     HealthProfileResponse,
     HealthProfileUpdate,
@@ -14,6 +15,55 @@ from app.schemas.health_profile import (
 from app.services import health_profile_service, user_service
 
 router = APIRouter(prefix="/health-profiles", tags=["health-profiles"])
+
+
+@router.get(
+    "/me",
+    response_model=HealthProfileResponse,
+    summary="Get My Health Profile",
+    description="Retrieve the authenticated user's health profile using JWT identity.",
+)
+def get_my_health_profile_endpoint(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> HealthProfileResponse:
+    profile = health_profile_service.get_profile_by_user_id(db, current_user.id)
+    if not profile:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Health profile not found for current user.",
+        )
+    return profile
+
+
+@router.put(
+    "/me",
+    response_model=HealthProfileResponse,
+    summary="Upsert My Health Profile",
+    description="Create or update the authenticated user's health profile and compute BMR/TDEE targets.",
+)
+def upsert_my_health_profile_endpoint(
+    profile_in: HealthProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> HealthProfileResponse:
+    return health_profile_service.upsert_profile_for_user(
+        db, current_user.id, profile_in
+    )
+
+
+@router.get(
+    "/me/completeness",
+    response_model=HealthProfileCompletenessResponse,
+    summary="Get My Health Profile Completeness",
+    description="Check required fields, missing anthropometric fields, BMI, and target energy for current user.",
+)
+def get_my_health_profile_completeness_endpoint(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> HealthProfileCompletenessResponse:
+    profile = health_profile_service.get_profile_by_user_id(db, current_user.id)
+    return health_profile_service.compute_profile_completeness(profile)
 
 
 @router.post(
@@ -110,4 +160,3 @@ def delete_health_profile_endpoint(
             detail=f"Health profile not found for user '{user_id}'.",
         )
     return {"message": "Health profile deleted successfully", "user_id": str(user_id)}
-

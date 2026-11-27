@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import Annotated, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 # Email regex pattern that does not require the third-party email-validator package
 EmailPattern = Annotated[
@@ -32,5 +32,11 @@ class UserResponse(BaseModel):
     display_name: Optional[str] = None
     consent_accepted_at: Optional[datetime] = None
     created_at: datetime
+
+    @computed_field
+    @property
+    def full_name(self) -> Optional[str]:
+        """Alias for display_name to match Frontend user profile contract."""
+        return self.display_name
 
     model_config = ConfigDict(from_attributes=True)

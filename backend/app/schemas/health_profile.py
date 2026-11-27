@@ -1,12 +1,13 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 SexType = Literal["male", "female", "other"]
 ActivityLevelType = Literal["sedentary", "light", "moderate", "active", "very_active"]
+NutritionGoalType = Literal["weight_loss", "maintenance"]
 
 
 class HealthProfileBase(BaseModel):
@@ -18,6 +19,9 @@ class HealthProfileBase(BaseModel):
     diagnosis_year: Optional[int] = Field(None, ge=1900, le=2100)
     activity_level: Optional[ActivityLevelType] = None
     dietary_preference: Optional[str] = Field(None, max_length=100)
+    nutrition_goal: NutritionGoalType = "maintenance"
+    comorbidities: List[str] = Field(default_factory=list)
+    allergies: List[str] = Field(default_factory=list)
 
 
 class HealthProfileCreate(HealthProfileBase):
@@ -33,6 +37,9 @@ class HealthProfileUpdate(BaseModel):
     diagnosis_year: Optional[int] = Field(None, ge=1900, le=2100)
     activity_level: Optional[ActivityLevelType] = None
     dietary_preference: Optional[str] = Field(None, max_length=100)
+    nutrition_goal: Optional[NutritionGoalType] = None
+    comorbidities: Optional[List[str]] = None
+    allergies: Optional[List[str]] = None
 
 
 class HealthProfileResponse(HealthProfileBase):
@@ -40,6 +47,9 @@ class HealthProfileResponse(HealthProfileBase):
     user_id: uuid.UUID
     height_cm: Optional[float] = None
     weight_kg: Optional[float] = None
+    bmr_kcal: Optional[float] = None
+    tdee_kcal: Optional[float] = None
+    target_energy_kcal: Optional[float] = None
     updated_at: datetime
 
     @computed_field
@@ -53,3 +63,12 @@ class HealthProfileResponse(HealthProfileBase):
         return None
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class HealthProfileCompletenessResponse(BaseModel):
+    is_complete: bool
+    missing_fields: List[str]
+    bmi: Optional[float] = None
+    bmr_kcal: Optional[float] = None
+    tdee_kcal: Optional[float] = None
+    target_energy_kcal: Optional[float] = None

@@ -1,10 +1,10 @@
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import CheckConstraint, Date, DateTime, Float, ForeignKey, Numeric, String, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -15,6 +15,24 @@ if TYPE_CHECKING:
 
 class HealthProfile(Base):
     __tablename__ = "health_profiles"
+    __table_args__ = (
+        CheckConstraint(
+            "nutrition_goal IN ('weight_loss', 'maintenance')",
+            name="ck_health_profiles_nutrition_goal",
+        ),
+        CheckConstraint(
+            "bmr_kcal IS NULL OR bmr_kcal > 0",
+            name="ck_health_profiles_bmr_positive",
+        ),
+        CheckConstraint(
+            "tdee_kcal IS NULL OR tdee_kcal > 0",
+            name="ck_health_profiles_tdee_positive",
+        ),
+        CheckConstraint(
+            "target_energy_kcal IS NULL OR target_energy_kcal > 0",
+            name="ck_health_profiles_target_energy_positive",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -59,6 +77,36 @@ class HealthProfile(Base):
     )
     dietary_preference: Mapped[Optional[str]] = mapped_column(
         String(100),
+        nullable=True,
+    )
+    nutrition_goal: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="maintenance",
+        server_default=text("'maintenance'"),
+    )
+    comorbidities: Mapped[List[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    allergies: Mapped[List[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
+    bmr_kcal: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    tdee_kcal: Mapped[Optional[float]] = mapped_column(
+        Float,
+        nullable=True,
+    )
+    target_energy_kcal: Mapped[Optional[float]] = mapped_column(
+        Float,
         nullable=True,
     )
     updated_at: Mapped[datetime] = mapped_column(
