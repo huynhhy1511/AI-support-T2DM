@@ -5,6 +5,7 @@ from app.api.v1.foods import router as foods_router
 from app.api.v1.glucose_records import router as glucose_router
 from app.api.v1.health import router as health_router
 from app.api.v1.health_profiles import router as health_profiles_router
+from app.api.v1.meal_diary import router as meal_diary_router
 from app.api.v1.nutrition import router as nutrition_router
 from app.api.v1.users import router as users_router
 
@@ -16,5 +17,6 @@ api_router.include_router(health_profiles_router)
 api_router.include_router(glucose_router)
 api_router.include_router(foods_router)
 api_router.include_router(nutrition_router)
+api_router.include_router(meal_diary_router)
 
 __all__ = ["api_router"]
