@@ -429,6 +429,81 @@ def test_scoring_and_safety_notes_sodium_and_saturated_fat():
     assert protein_item.saturated_fat_g == 8.0
 
 
+def test_constraint_engine_structured_allergens_and_keyword_fallback():
+    """Verify structured food.allergens filtering (shellfish, soy, egg) and backward-compatible keyword fallback."""
+    from app.models.allergen import Allergen
+
+    shellfish_allergen = Allergen(code="shellfish", name_vi="Hải sản có vỏ", name_en="Shellfish")
+    seafood_allergen = Allergen(code="seafood", name_vi="Hải sản", name_en="Seafood")
+    soy_allergen = Allergen(code="soy", name_vi="Đậu nành", name_en="Soy")
+    egg_allergen = Allergen(code="egg", name_vi="Trứng", name_en="Egg")
+
+    shrimp = _make_dummy_food("Tôm sú hấp sả", "protein", 0.2, 22.8, 0.8)
+    shrimp.allergens = [shellfish_allergen, seafood_allergen]
+
+    # Name intentionally does NOT contain "soy" or "đậu nành" — must be caught via structured allergen relation
+    yuba = _make_dummy_food("Tàu hũ ky tươi hấp", "protein", 4.2, 16.5, 7.2)
+    yuba.allergens = [soy_allergen]
+
+    egg_white = _make_dummy_food("Lòng trắng trứng gà hấp", "protein", 0.7, 10.9, 0.2)
+    egg_white.allergens = [egg_allergen]
+
+    chicken = _make_dummy_food("Ức gà phi lê áp chảo", "protein", 0.0, 31.0, 3.6)
+    chicken.allergens = []
+
+    # Legacy food without structured allergens — must still be excluded by keyword fallback
+    legacy_peanut = _make_dummy_food("Đậu phộng luộc nhạt", "snack", 7.4, 4.7, 7.7)
+    legacy_peanut.allergens = []
+
+    pool = [shrimp, yuba, egg_white, chicken, legacy_peanut]
+
+    # 1. Exclude shellfish by allergen code
+    req_shellfish = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="lunch",
+        excluded_keywords=["shellfish"],
+    )
+    res_shellfish = ConstraintEngine.filter_foods(foods=pool, request=req_shellfish)
+    names_shellfish = [f.name for f in res_shellfish]
+    assert "Tôm sú hấp sả" not in names_shellfish
+    assert "Tàu hũ ky tươi hấp" in names_shellfish
+    assert "Ức gà phi lê áp chảo" in names_shellfish
+
+    # 2. Exclude soy by Vietnamese allergen name_vi (catches "Tàu hũ ky tươi hấp" even without "đậu nành" in name)
+    req_soy = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="lunch",
+        excluded_keywords=["đậu nành"],
+    )
+    res_soy = ConstraintEngine.filter_foods(foods=pool, request=req_soy)
+    names_soy = [f.name for f in res_soy]
+    assert "Tàu hũ ky tươi hấp" not in names_soy
+    assert "Ức gà phi lê áp chảo" in names_soy
+
+    # 3. Exclude egg + soy + shellfish via excluded_allergens
+    req_multi = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="lunch",
+        excluded_allergens=["shellfish", "soy", "egg"],
+    )
+    res_multi = ConstraintEngine.filter_foods(foods=pool, request=req_multi)
+    names_multi = [f.name for f in res_multi]
+    assert "Tôm sú hấp sả" not in names_multi
+    assert "Tàu hũ ky tươi hấp" not in names_multi
+    assert "Lòng trắng trứng gà hấp" not in names_multi
+    assert "Ức gà phi lê áp chảo" in names_multi
+
+    # 4. Fallback for untagged food via allergen code "peanut"
+    req_peanut = MealRecommendationRequest(
+        user_id=uuid.uuid4(),
+        meal_type="snack",
+        excluded_allergens=["peanut"],
+    )
+    res_peanut = ConstraintEngine.filter_foods(foods=pool, request=req_peanut)
+    assert "Đậu phộng luộc nhạt" not in [f.name for f in res_peanut]
+
+
+
 
 
 

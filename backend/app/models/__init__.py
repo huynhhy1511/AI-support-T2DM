@@ -1,4 +1,5 @@
 from app.db.base import Base
+from app.models.allergen import Allergen, food_allergens
 from app.models.food import Food
 from app.models.glucose_record import GlucoseRecord
 from app.models.health_profile import HealthProfile
@@ -11,6 +12,8 @@ __all__ = [
     "User",
     "HealthProfile",
     "GlucoseRecord",
+    "Allergen",
+    "food_allergens",
     "Food",
     "MealRecommendation",
     "MealRecommendationItem",

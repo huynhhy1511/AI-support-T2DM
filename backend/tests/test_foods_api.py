@@ -142,3 +142,44 @@ def test_food_micronutrients_sodium_and_saturated_fat():
         client.delete(f"/api/v1/foods/{food_id}")
 
 
+def test_seed_vn_foods_idempotent_and_metadata_response():
+    """Verify running seed_vn_foods twice is idempotent and API returns metadata + structured allergens."""
+    from app.db.session import SessionLocal
+    from app.models.allergen import Allergen
+    from app.models.food import Food
+    from app.scripts.seed_vn_foods import seed_vn_foods
+
+    db = SessionLocal()
+    try:
+        summary_1 = seed_vn_foods(db)
+        food_count_1 = db.query(Food).count()
+        allergen_count_1 = db.query(Allergen).count()
+
+        summary_2 = seed_vn_foods(db)
+        food_count_2 = db.query(Food).count()
+        allergen_count_2 = db.query(Allergen).count()
+
+        assert summary_1["foods_total_in_dataset"] >= 60
+        assert summary_2["foods_inserted"] == 0
+        assert summary_2["foods_updated"] == summary_1["foods_total_in_dataset"]
+        assert food_count_1 == food_count_2
+        assert allergen_count_1 == allergen_count_2
+        assert allergen_count_2 >= 8
+    finally:
+        db.close()
+
+    # Verify API exposes preparation_state, data_source, data_version, and structured allergens
+    res = client.get("/api/v1/foods?search=Tôm sú&limit=20")
+    assert res.status_code == 200
+    items = res.json()
+    assert len(items) >= 1
+    shrimp = next(i for i in items if "Tôm sú" in i["name"])
+    assert shrimp["preparation_state"] == "cooked"
+    assert shrimp["data_source"] in ("VN_NIN_2007", "USDA_FDC")
+    assert shrimp["data_version"] == "v1.0"
+    allergen_codes = {a["code"] for a in shrimp["allergens"]}
+    assert "shellfish" in allergen_codes
+    assert "seafood" in allergen_codes
+
+
+

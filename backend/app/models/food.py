@@ -16,8 +16,10 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
+from app.models.allergen import food_allergens
 
 if TYPE_CHECKING:
+    from app.models.allergen import Allergen
     from app.models.meal_recommendation_item import MealRecommendationItem
 
 
@@ -38,6 +40,10 @@ class Food(Base):
         CheckConstraint("glycemic_load IS NULL OR glycemic_load >= 0", name="check_food_gl_non_negative"),
         CheckConstraint("sodium_mg IS NULL OR sodium_mg >= 0", name="ck_foods_sodium_non_negative"),
         CheckConstraint("saturated_fat_g IS NULL OR saturated_fat_g >= 0", name="ck_foods_saturated_fat_non_negative"),
+        CheckConstraint(
+            "preparation_state IN ('raw', 'cooked', 'ready_to_eat')",
+            name="ck_foods_preparation_state",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -104,6 +110,24 @@ class Food(Base):
         Float,
         nullable=True,
     )
+    preparation_state: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="cooked",
+        server_default=text("'cooked'"),
+    )
+    data_source: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        default="VN_NIN_USDA",
+        server_default=text("'VN_NIN_USDA'"),
+    )
+    data_version: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="v1.0",
+        server_default=text("'v1.0'"),
+    )
     is_test_data: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
@@ -131,6 +155,12 @@ class Food(Base):
     )
 
     # Relationships
+    allergens: Mapped[List["Allergen"]] = relationship(
+        "Allergen",
+        secondary=food_allergens,
+        back_populates="foods",
+        lazy="selectin",
+    )
     recommendation_items: Mapped[List["MealRecommendationItem"]] = relationship(
         "MealRecommendationItem",
         back_populates="food",

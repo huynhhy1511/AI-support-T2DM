@@ -151,20 +151,25 @@ def test_recommendation_invalid_meal_type():
 
 def test_recommendation_all_foods_excluded_no_unsafe_fallback():
     """Verify that when all foods are excluded (e.g. severe allergies/restrictions), system returns empty items, NEVER falling back to all foods."""
+    from sqlalchemy import select
+    from app.db.session import SessionLocal
+    from app.models.food import Food
+
     user_id, headers = _register_and_login("no_fallback")
 
+    db = SessionLocal()
     try:
-        all_food_keywords = [
-            "gạo", "yến mạch", "khoai", "cơm", "ức gà", "cá hồi",
-            "đậu phụ", "trứng", "bông cải", "rau muống", "dưa chuột",
-            "táo", "sữa chua", "hạnh nhân", "cá thu"
-        ]
+        all_food_ids = [str(fid) for fid in db.scalars(select(Food.id)).all()]
+    finally:
+        db.close()
+
+    try:
         res = client.post(
             "/api/v1/nutrition/recommend",
             json={
                 "user_id": user_id,
                 "meal_type": "lunch",
-                "excluded_keywords": all_food_keywords,
+                "excluded_food_ids": all_food_ids,
             },
             headers=headers,
         )
@@ -265,3 +270,44 @@ def test_recommendation_dynamic_portion_api_and_persistence():
             assert 0.5 <= item["serving_multiplier"] <= 2.0
     finally:
         client.delete(f"/api/v1/users/{user_id}", headers=headers)
+
+
+def test_recommendation_structured_allergen_filtering_api():
+    """Verify recommendation API excludes all foods tagged with user's declared allergens (shellfish, soy, egg)."""
+    from app.db.session import SessionLocal
+    from app.models.food import Food
+    from app.scripts.seed_vn_foods import seed_vn_foods
+
+    db = SessionLocal()
+    try:
+        seed_vn_foods(db)
+    finally:
+        db.close()
+
+    user_id, headers = _register_and_login("allergen_api")
+    try:
+        res = client.post(
+            "/api/v1/nutrition/recommend",
+            json={
+                "user_id": user_id,
+                "meal_type": "lunch",
+                "excluded_allergens": ["shellfish", "soy", "egg"],
+            },
+            headers=headers,
+        )
+        assert res.status_code == 200, res.text
+        data = res.json()
+        assert len(data["items"]) >= 2
+
+        db = SessionLocal()
+        try:
+            for item in data["items"]:
+                food = db.get(Food, uuid.UUID(item["food_id"]))
+                assert food is not None
+                codes = {a.code for a in food.allergens}
+                assert not (codes & {"shellfish", "soy", "egg"})
+        finally:
+            db.close()
+    finally:
+        client.delete(f"/api/v1/users/{user_id}", headers=headers)
+
