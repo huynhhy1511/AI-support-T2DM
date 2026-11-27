@@ -19,6 +19,7 @@ class MealRecommendationRequest(BaseModel):
     dietary_preference: Optional[str] = Field(None, max_length=100, description="Sở thích hoặc chế độ ăn (ví dụ: 'vegetarian', 'low_carb', 'low_sodium')")
     excluded_food_ids: Optional[List[uuid.UUID]] = Field(default=None, description="Danh sách ID thực phẩm muốn loại trừ")
     excluded_keywords: Optional[List[str]] = Field(default=None, description="Từ khóa thực phẩm kiêng hoặc dị ứng (ví dụ: 'tôm', 'đậu phộng')")
+    excluded_allergens: Optional[List[str]] = Field(default=None, description="Danh sách mã hoặc tên dị ứng chuẩn hóa (ví dụ: 'shellfish', 'soy', 'egg')")
     custom_target: Optional[NutritionTarget] = Field(None, description="Mục tiêu dinh dưỡng cụ thể do người dùng cung cấp nếu có cơ sở phù hợp")
 
 

@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 from decimal import Decimal
-from typing import Literal, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -15,6 +15,17 @@ FoodCategoryType = Literal[
     "snack",
     "beverage",
 ]
+
+PreparationStateType = Literal["raw", "cooked", "ready_to_eat"]
+
+
+class AllergenResponse(BaseModel):
+    id: uuid.UUID
+    code: str
+    name_vi: str
+    name_en: str
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class FoodBase(BaseModel):
@@ -31,9 +42,13 @@ class FoodBase(BaseModel):
     glycemic_load: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
     sodium_mg: Optional[float] = Field(default=None, ge=0)
     saturated_fat_g: Optional[float] = Field(default=None, ge=0)
+    preparation_state: PreparationStateType = "cooked"
+    data_source: str = Field(default="VN_NIN_USDA", min_length=1, max_length=100)
+    data_version: str = Field(default="v1.0", min_length=1, max_length=30)
     is_test_data: bool = False
     source_name: Optional[str] = Field(None, max_length=255)
     source_url: Optional[str] = Field(None, max_length=500)
+    allergen_codes: Optional[List[str]] = Field(default=None)
 
 
 class FoodCreate(FoodBase):
@@ -54,9 +69,13 @@ class FoodUpdate(BaseModel):
     glycemic_load: Optional[Decimal] = Field(None, ge=0, decimal_places=2)
     sodium_mg: Optional[float] = Field(default=None, ge=0)
     saturated_fat_g: Optional[float] = Field(default=None, ge=0)
+    preparation_state: Optional[PreparationStateType] = None
+    data_source: Optional[str] = Field(None, min_length=1, max_length=100)
+    data_version: Optional[str] = Field(None, min_length=1, max_length=30)
     is_test_data: Optional[bool] = None
     source_name: Optional[str] = Field(None, max_length=255)
     source_url: Optional[str] = Field(None, max_length=500)
+    allergen_codes: Optional[List[str]] = None
 
 
 class FoodResponse(BaseModel):
@@ -74,11 +93,14 @@ class FoodResponse(BaseModel):
     glycemic_load: Optional[float] = None
     sodium_mg: Optional[float] = None
     saturated_fat_g: Optional[float] = None
+    preparation_state: str
+    data_source: str
+    data_version: str
     is_test_data: bool
     source_name: Optional[str] = None
     source_url: Optional[str] = None
+    allergens: List[AllergenResponse] = []
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
-

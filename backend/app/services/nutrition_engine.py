@@ -1,3 +1,4 @@
+import re
 import uuid
 from decimal import Decimal
 from typing import List, Optional, Tuple
@@ -88,8 +89,50 @@ ANIMAL_BYPRODUCT_KEYWORDS = [
 ]
 
 
+ALLERGEN_FALLBACK_KEYWORDS = {
+    "seafood": ["cá", "tôm", "cua", "mực", "ngao", "nghêu", "sò", "hải sản", "fish", "salmon", "shrimp", "crab", "squid", "clam", "seafood"],
+    "shellfish": ["tôm", "cua", "mực", "ngao", "nghêu", "sò", "ốc", "shrimp", "crab", "squid", "clam", "shellfish"],
+    "fish": ["cá", "fish", "salmon", "mackerel", "tilapia", "basa"],
+    "egg": ["trứng", "egg"],
+    "dairy": ["sữa", "sữa chua", "phô mai", "milk", "yogurt", "cheese", "butter", "dairy"],
+    "soy": ["đậu nành", "đậu phụ", "tàu hũ", "tempeh", "tofu", "soy"],
+    "peanut": ["đậu phộng", "lạc", "peanut"],
+    "tree_nut": ["hạnh nhân", "óc chó", "hạt điều", "almond", "walnut", "cashew", "tree_nut"],
+    "gluten": ["bánh mì", "lúa mì", "lúa mạch", "mì soba", "wheat", "rye", "gluten"],
+    "sesame": ["mè", "vừng", "sesame"],
+}
+
+
 class ConstraintEngine:
-    """Rule-based filtering for meals based on user profile, exclusions, and dietary constraints."""
+    """Rule-based filtering for meals based on user profile, exclusions, structured allergens, and dietary constraints."""
+
+    @staticmethod
+    def _term_matches_text(term: str, text: str) -> bool:
+        if not term or not text:
+            return False
+        if term == text:
+            return True
+        return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text) is not None
+
+    @classmethod
+    def _matches_structured_allergens(cls, food: Food, terms: List[str]) -> bool:
+        """Check user allergy/exclusion terms against normalized food.allergens (code, name_vi, name_en)."""
+        allergens = getattr(food, "allergens", None) or []
+        if not allergens or not terms:
+            return False
+
+        for allergen in allergens:
+            code = (getattr(allergen, "code", "") or "").lower().strip()
+            name_vi = (getattr(allergen, "name_vi", "") or "").lower().strip()
+            name_en = (getattr(allergen, "name_en", "") or "").lower().strip()
+
+            for term in terms:
+                normalized_code = term.replace(" ", "_").replace("-", "_")
+                if normalized_code == code or term == code:
+                    return True
+                if cls._term_matches_text(term, name_vi) or cls._term_matches_text(term, name_en):
+                    return True
+        return False
 
     @staticmethod
     def filter_foods(
@@ -109,10 +152,14 @@ class ConstraintEngine:
         # 2. Build set of excluded food IDs
         excluded_ids = set(request.excluded_food_ids or [])
 
-        # 3. Build list of lowercase exclusion keywords
+        # 3. Build lists of lowercase exclusion keywords and structured allergen terms
         excluded_keywords = [
-            k.lower().strip() for k in (request.excluded_keywords or []) if k.strip()
+            k.lower().strip() for k in (request.excluded_keywords or []) if k and k.strip()
         ]
+        excluded_allergens = [
+            a.lower().strip() for a in (request.excluded_allergens or []) if a and a.strip()
+        ]
+        all_allergy_terms = list(dict.fromkeys(excluded_allergens + excluded_keywords))
 
         # 4. Check each food item against constraints
         for food in foods:
@@ -120,15 +167,38 @@ class ConstraintEngine:
             if food.id in excluded_ids:
                 continue
 
-            # Rule 2: Exclude by keywords (e.g. allergies, user dislikes)
             name_lower = food.name.lower()
+            food_allergens = getattr(food, "allergens", None) or []
+            food_allergen_codes = {
+                (getattr(a, "code", "") or "").lower().strip() for a in food_allergens
+            }
+
+            # Rule 2A (Priority): Structured allergen relation check (code, name_vi, name_en)
+            if ConstraintEngine._matches_structured_allergens(food, all_allergy_terms):
+                continue
+
+            # Rule 2B (Backward-compatible fallback & name keyword exclusion)
             if any(kw in name_lower for kw in excluded_keywords):
                 continue
+
+            if not food_allergens and all_allergy_terms:
+                # Fallback for legacy/untagged records without rows in food_allergens
+                fallback_matched = False
+                for term in all_allergy_terms:
+                    normalized_code = term.replace(" ", "_").replace("-", "_")
+                    fallback_kws = ALLERGEN_FALLBACK_KEYWORDS.get(normalized_code, [])
+                    if term in name_lower or any(fkw in name_lower for fkw in fallback_kws):
+                        fallback_matched = True
+                        break
+                if fallback_matched:
+                    continue
 
             # Rule 3: Vegetarian vs Vegan constraints
             # Group 3A: Vegan (Thuần chay) - Loai bo thit, ca/hai san VA toan bo pham vat tu dong vat (trung, sua, etc.)
             if pref_lower in ["vegan", "thuần chay"]:
                 if food.category == "dairy":
+                    continue
+                if food_allergen_codes & {"fish", "shellfish", "seafood", "egg", "dairy"}:
                     continue
                 if any(mk in name_lower for mk in MEAT_AND_SEAFOOD_KEYWORDS):
                     continue
@@ -137,6 +207,8 @@ class ConstraintEngine:
 
             # Group 3B: Vegetarian (An chay co trung/sua) - Chi loai bo thit/hai san, van cho phep trung va sua
             elif pref_lower in ["vegetarian", "chay", "ăn chay"]:
+                if food_allergen_codes & {"fish", "shellfish", "seafood"}:
+                    continue
                 if any(ek in name_lower for ek in ["trứng", "egg"]):
                     # Trứng gà / trứng vịt được phép cho người ăn chay, trừ khi có kèm thịt/hải sản thực sự
                     real_meat_keywords = [

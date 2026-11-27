@@ -5,8 +5,19 @@ from typing import List, Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.models.allergen import Allergen
 from app.models.food import Food
 from app.schemas.food import FoodCreate, FoodUpdate
+
+
+def _resolve_allergens_by_codes(db: Session, codes: Optional[List[str]]) -> List[Allergen]:
+    if not codes:
+        return []
+    normalized = [c.strip().lower() for c in codes if c and c.strip()]
+    if not normalized:
+        return []
+    stmt = select(Allergen).where(Allergen.code.in_(normalized))
+    return list(db.scalars(stmt).all())
 
 
 def get_food_by_id(db: Session, food_id: uuid.UUID) -> Optional[Food]:
@@ -44,6 +55,7 @@ def list_foods(
 
 def create_food(db: Session, food_in: FoodCreate) -> Food:
     """Create a new food item in the database."""
+    allergens = _resolve_allergens_by_codes(db, food_in.allergen_codes)
     food = Food(
         name=food_in.name.strip(),
         category=food_in.category,
@@ -58,9 +70,13 @@ def create_food(db: Session, food_in: FoodCreate) -> Food:
         glycemic_load=food_in.glycemic_load,
         sodium_mg=food_in.sodium_mg,
         saturated_fat_g=food_in.saturated_fat_g,
+        preparation_state=food_in.preparation_state,
+        data_source=food_in.data_source,
+        data_version=food_in.data_version,
         is_test_data=food_in.is_test_data,
         source_name=food_in.source_name,
         source_url=food_in.source_url,
+        allergens=allergens,
     )
     db.add(food)
     db.commit()
@@ -75,8 +91,12 @@ def update_food(db: Session, food_id: uuid.UUID, food_in: FoodUpdate) -> Optiona
         return None
 
     update_data = food_in.model_dump(exclude_unset=True)
+    allergen_codes = update_data.pop("allergen_codes", None)
     for field, value in update_data.items():
         setattr(food, field, value)
+
+    if allergen_codes is not None:
+        food.allergens = _resolve_allergens_by_codes(db, allergen_codes)
 
     db.commit()
     db.refresh(food)
