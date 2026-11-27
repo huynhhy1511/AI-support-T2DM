@@ -21,14 +21,14 @@ import {
 import { PageHeader } from '../../components/ui/NavigationUI';
 import { LoadingSkeleton } from '../../components/ui/Feedback';
 import {
-  foodDiaryStorage,
   healthProfileApi,
+  mealDiaryApi,
   nutritionBackendApi,
 } from '../../services/nutritionApi';
 import type {
   DailyRecommendationsResponse,
   HealthProfile,
-  MealDiaryEntry,
+  MealLog,
   MealRecommendationResponse,
   MealType,
 } from '../../types/nutrition';
@@ -53,7 +53,7 @@ export function NutritionDashboardPage() {
   const [loading, setLoading] = useState(true);
   const [profile, setProfile] = useState<HealthProfile | null>(null);
   const [dailyPlan, setDailyPlan] = useState<DailyRecommendationsResponse | null>(null);
-  const [diary, setDiary] = useState<Record<MealType, MealDiaryEntry> | null>(null);
+  const [todayLogs, setTodayLogs] = useState<MealLog[]>([]);
 
   useEffect(() => {
     if (!user) return;
@@ -61,19 +61,20 @@ export function NutritionDashboardPage() {
     (async () => {
       setLoading(true);
       try {
-        const [hp, todayRecs] = await Promise.all([
+        const [hp, todayRecs, logsRes] = await Promise.all([
           healthProfileApi.getMe().catch(() => null),
           nutritionBackendApi.getToday(today).catch(() => null),
+          mealDiaryApi
+            .listLogs({ date_from: today, date_to: today, page: 1, page_size: 20 })
+            .catch(() => null),
         ]);
         if (active) {
           setProfile(hp);
           setDailyPlan(todayRecs);
+          setTodayLogs(logsRes?.items ?? []);
         }
       } finally {
-        if (active) {
-          setDiary(foodDiaryStorage.getByDate(user.id, today));
-          setLoading(false);
-        }
+        if (active) setLoading(false);
       }
     })();
     return () => {
@@ -102,10 +103,16 @@ export function NutritionDashboardPage() {
   const plannedFiber = hasPlan && summary ? Number(summary.total_fiber_g.toFixed(1)) : null;
   const plannedSodium = hasPlan && summary ? Math.round(summary.total_sodium_mg) : null;
 
-  const diaryEntries = diary ? Object.values(diary) : [];
-  const hasActual = diaryEntries.some((d) => d.status !== 'planned');
+  const logsByType: Partial<Record<MealType, MealLog>> = {};
+  for (const log of todayLogs) {
+    if (!logsByType[log.meal_type]) {
+      logsByType[log.meal_type] = log;
+    }
+  }
+  const latestLogs = Object.values(logsByType).filter(Boolean) as MealLog[];
+  const hasActual = latestLogs.length > 0;
   const actualKcal = hasActual
-    ? Math.round(diaryEntries.reduce((s, d) => s + d.actual_energy_kcal, 0))
+    ? Math.round(latestLogs.reduce((s, d) => s + d.actual_nutrition.calories_kcal, 0))
     : null;
 
   return (
@@ -216,23 +223,21 @@ export function NutritionDashboardPage() {
             <div className="dc-grid-2">
               {MEAL_META.map((m) => {
                 const mealPlan = mealsByType[m.key];
-                const logEntry = diary?.[m.key];
+                const logEntry = logsByType[m.key];
                 const statusLabel = logEntry
-                  ? logEntry.status === 'eaten_full'
+                  ? logEntry.status === 'eaten'
                     ? 'Đã ăn hết'
-                    : logEntry.status === 'eaten_partial'
+                    : logEntry.status === 'partially_eaten'
                       ? 'Ăn một phần'
                       : logEntry.status === 'skipped'
                         ? 'Đã bỏ bữa'
-                        : logEntry.status === 'eaten_other'
-                          ? 'Ăn món khác'
-                          : 'Theo kế hoạch'
+                        : 'Ăn món khác'
                   : mealPlan
                     ? 'Chưa ghi nhận'
                     : 'Chưa có thực đơn';
 
                 const tone =
-                  logEntry?.status === 'eaten_full'
+                  logEntry?.status === 'eaten'
                     ? 'success'
                     : logEntry?.status === 'skipped'
                       ? 'warning'

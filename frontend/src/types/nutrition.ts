@@ -59,16 +59,6 @@ export interface HealthProfileCompleteness {
   target_energy_kcal: number | null;
 }
 
-/**
- * Giữ lại cho các màn hình chưa chuyển đổi sang Backend ở Đợt 7B (AIExplanationPage).
- */
-export interface LocalClinicalPreferences {
-  nutrition_goal: NutritionGoalType;
-  comorbidities: string[];
-  allergies: string[];
-  weight_updated_at?: string;
-}
-
 /** Khớp chính xác schema backend FoodResponse (Migration 004) */
 export interface FoodItem {
   id: string;
@@ -207,40 +197,126 @@ export interface SafetyAlertsResponse {
   alerts: BackendSafetyAlert[];
 }
 
-export interface DailyMealPlan {
-  date: string; // YYYY-MM-DD
-  generated_at: string;
-  meals: Partial<Record<MealType, MealRecommendationResponse>>;
-  status: 'active' | 'draft' | 'abstained';
-  abstention_reason?: string | null;
-  missing_fields?: string[];
-  applied_preference?: string | null;
-  applied_goal?: string | null;
+/* ==========================================================================
+   MEAL DIARY & PROGRESS TYPES (Khớp 100% backend/app/schemas/meal_diary.py)
+   ========================================================================== */
+
+export type MealLogStatusType = 'eaten' | 'partially_eaten' | 'skipped' | 'eaten_other';
+
+export interface MealLogItemCreate {
+  food_id?: string | null;
+  custom_food_name?: string | null;
+  serving_g: number;
+  calories_kcal?: number | null;
+  carbs_g?: number | null;
+  protein_g?: number | null;
+  fat_g?: number | null;
+  fiber_g?: number | null;
+  sodium_mg?: number | null;
 }
 
-export type DiaryLogStatus = 'planned' | 'eaten_full' | 'eaten_partial' | 'eaten_other' | 'skipped';
-
-export interface MealDiaryEntry {
+export interface MealLogItem {
   id: string;
-  date: string;
-  meal_type: MealType;
-  status: DiaryLogStatus;
-  portion_ratio: number; // 1.0, 0.75, 0.5, 0
-  logged_at: string;
-  note?: string;
-  custom_food_name?: string;
-  photo_preview_url?: string;
-  actual_energy_kcal: number;
-  actual_carbohydrate_g: number;
-  actual_protein_g: number;
-  actual_fat_g: number;
-  actual_fiber_g: number;
-  actual_sodium_mg: number;
+  food_id: string | null;
+  food_name: string | null;
+  custom_food_name: string | null;
+  serving_g: number;
+  calories_kcal: number;
+  carbs_g: number;
+  protein_g: number;
+  fat_g: number;
+  fiber_g: number | null;
+  sodium_mg: number | null;
 }
 
-export interface WeightLogEntry {
-  date: string;
+export interface ActualNutrition {
+  calories_kcal: number;
+  carbs_g: number;
+  protein_g: number;
+  fat_g: number;
+  fiber_g: number | null;
+  sodium_mg: number | null;
+}
+
+export interface MealLogCreate {
+  recommendation_id?: string | null;
+  meal_date?: string;
+  meal_type: MealType;
+  status: MealLogStatusType;
+  notes?: string | null;
+  items: MealLogItemCreate[];
+}
+
+export interface MealLogUpdate {
+  status?: MealLogStatusType;
+  notes?: string | null;
+  items?: MealLogItemCreate[];
+}
+
+export interface MealLog {
+  id: string;
+  user_id: string;
+  recommendation_id: string | null;
+  meal_date: string;
+  meal_type: MealType;
+  status: MealLogStatusType;
+  notes: string | null;
+  items: MealLogItem[];
+  actual_nutrition: ActualNutrition;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MealLogListResponse {
+  items: MealLog[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
+export interface WeightRecordCreate {
   weight_kg: number;
+  recorded_at?: string;
+}
+
+export interface WeightRecord {
+  id: string;
+  user_id: string;
+  weight_kg: number;
+  recorded_at: string;
+  created_at: string;
+}
+
+export interface ProgressPeriod {
+  date_from: string;
+  date_to: string;
+}
+
+export interface ProgressSummary {
+  total_meals_logged: number;
+  total_meals_skipped: number;
+  meal_logging_rate: number;
+}
+
+export interface NutritionTrendPoint {
+  date: string;
+  planned_calories_kcal: number;
+  actual_calories_kcal: number;
+  planned_carbs_g: number;
+  actual_carbs_g: number;
+}
+
+export interface WeightProgressSummary {
+  latest_kg: number | null;
+  previous_kg: number | null;
+  records: WeightRecord[];
+}
+
+export interface NutritionProgressResponse {
+  period: ProgressPeriod;
+  summary: ProgressSummary;
+  nutrition_trends: NutritionTrendPoint[];
+  weight: WeightProgressSummary;
 }
 
 export interface SafetyAlertItem {

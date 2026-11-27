@@ -22,15 +22,13 @@ import { DateSelector } from '../../components/ui/FormControls';
 import { PageHeader } from '../../components/ui/NavigationUI';
 import { StatusBadge } from '../../components/ui/Badges';
 import {
-  foodDiaryStorage,
   foodsApi,
+  mealDiaryApi,
   nutritionBackendApi,
-  sumMealSodium,
 } from '../../services/nutritionApi';
 import type {
   DailyRecommendationsResponse,
   FoodAlternativeItem,
-  MealDiaryEntry,
   MealRecommendationResponse,
   MealType,
   RecommendedFoodItem,
@@ -163,29 +161,29 @@ export function DailyMealPlanPage() {
     }
   };
 
-  const handleLogMealAsEaten = (mealType: MealType) => {
+  const handleLogMealAsEaten = async (mealType: MealType) => {
     const meal = mealsByType[mealType];
     if (!meal) return;
 
-    const existing =
-      foodDiaryStorage.getByDate(user.id, selectedDate) ||
-      ({} as Record<MealType, MealDiaryEntry>);
-    existing[mealType] = {
-      id: `${selectedDate}-${mealType}`,
-      date: selectedDate,
-      meal_type: mealType,
-      status: 'eaten_full',
-      portion_ratio: 1.0,
-      logged_at: new Date().toISOString(),
-      actual_energy_kcal: meal.total_energy_kcal,
-      actual_carbohydrate_g: meal.total_carbohydrate_g,
-      actual_protein_g: meal.total_protein_g,
-      actual_fat_g: meal.total_fat_g,
-      actual_fiber_g: meal.total_fiber_g,
-      actual_sodium_mg: meal.total_sodium_mg ?? sumMealSodium(meal.items),
-    };
-    foodDiaryStorage.saveByDate(user.id, selectedDate, existing);
-    setToast(`Đã ghi nhận bữa ${mealType} vào Nhật ký ăn uống (kế hoạch gốc vẫn được giữ nguyên).`);
+    try {
+      await mealDiaryApi.createLog({
+        recommendation_id: meal.recommendation_id,
+        meal_date: selectedDate,
+        meal_type: mealType,
+        status: 'eaten',
+        items: meal.items.map((it) => ({
+          food_id: it.food_id,
+          serving_g: Math.max(1, Number((it.serving_size_g * it.serving_multiplier).toFixed(1))),
+        })),
+      });
+      setToast(
+        `Đã ghi nhận bữa ${mealType} vào Nhật ký ăn uống trên máy chủ (kế hoạch gốc vẫn được giữ nguyên).`
+      );
+    } catch (err) {
+      setLoadError(
+        err instanceof Error ? err.message : 'Không thể ghi nhận bữa ăn vào nhật ký.'
+      );
+    }
   };
 
   return (
