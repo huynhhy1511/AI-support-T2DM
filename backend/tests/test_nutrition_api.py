@@ -434,3 +434,208 @@ def test_nutrition_safety_alerts_endpoint():
         client.delete(f"/api/v1/users/{user_id}", headers=headers)
 
 
+def test_food_alternatives_filters_category_and_user_allergies():
+    """Verify GET /foods/{id}/alternatives returns same-category foods excluding original and user allergies."""
+    from app.db.session import SessionLocal
+    from app.scripts.seed_vn_foods import seed_vn_foods
+
+    db = SessionLocal()
+    try:
+        seed_vn_foods(db)
+    finally:
+        db.close()
+
+    user_id, headers = _register_and_login("food_alt")
+    try:
+        # User is allergic to shellfish and soy
+        hp_res = client.put(
+            "/api/v1/health-profiles/me",
+            json={"allergies": ["shellfish", "soy"]},
+            headers=headers,
+        )
+        assert hp_res.status_code == 200
+
+        # Pick a protein food (chicken breast)
+        search_res = client.get("/api/v1/foods?search=Ức gà phi lê&limit=10")
+        assert search_res.status_code == 200
+        chicken = search_res.json()[0]
+
+        alt_res = client.get(
+            f"/api/v1/foods/{chicken['id']}/alternatives?limit=8", headers=headers
+        )
+        assert alt_res.status_code == 200, alt_res.text
+        alternatives = alt_res.json()
+        assert 1 <= len(alternatives) <= 8
+        for alt in alternatives:
+            assert alt["id"] != chicken["id"]
+            assert alt["category"] == chicken["category"]
+            assert "similarity_reason" in alt and alt["similarity_reason"]
+            assert "kcal_diff" in alt
+            allergen_codes = {a["code"] for a in alt["allergens"]}
+            assert not (allergen_codes & {"shellfish", "soy"})
+
+        # Nonexistent food returns 404
+        not_found = client.get(
+            f"/api/v1/foods/{uuid.uuid4()}/alternatives", headers=headers
+        )
+        assert not_found.status_code == 404
+    finally:
+        client.delete(f"/api/v1/users/{user_id}", headers=headers)
+
+
+def test_food_substitution_success_allergy_block_and_ownership():
+    """Verify POST /nutrition/recommendations/{id}/substitutions updates totals safely, blocks allergies (400), and blocks cross-user (403)."""
+    from app.db.session import SessionLocal
+    from app.scripts.seed_vn_foods import seed_vn_foods
+
+    db = SessionLocal()
+    try:
+        seed_vn_foods(db)
+    finally:
+        db.close()
+
+    user_id, headers = _register_and_login("sub_owner")
+    other_id, other_headers = _register_and_login("sub_other")
+    try:
+        # 1. Owner declares shellfish allergy
+        client.put(
+            "/api/v1/health-profiles/me",
+            json={"allergies": ["shellfish"]},
+            headers=headers,
+        )
+
+        # 2. Generate lunch recommendation
+        gen_res = client.post(
+            "/api/v1/nutrition/recommend",
+            json={"user_id": user_id, "meal_type": "lunch"},
+            headers=headers,
+        )
+        assert gen_res.status_code == 200, gen_res.text
+        rec = gen_res.json()
+        rec_id = rec["recommendation_id"]
+        protein_item = next(i for i in rec["items"] if i["category"] == "protein")
+
+        # 3. Find a safe alternative protein and a shellfish protein (shrimp)
+        alt_res = client.get(
+            f"/api/v1/foods/{protein_item['food_id']}/alternatives?limit=5",
+            headers=headers,
+        )
+        assert alt_res.status_code == 200
+        safe_alt = alt_res.json()[0]
+
+        shrimp_res = client.get("/api/v1/foods?search=Tôm sú&limit=5")
+        shrimp = next(i for i in shrimp_res.json() if "Tôm sú" in i["name"])
+
+        # 4. Cross-user substitution attempt -> 403 Forbidden
+        forbidden_res = client.post(
+            f"/api/v1/nutrition/recommendations/{rec_id}/substitutions",
+            json={
+                "original_food_id": protein_item["food_id"],
+                "replacement_food_id": safe_alt["id"],
+            },
+            headers=other_headers,
+        )
+        assert forbidden_res.status_code == 403
+
+        # 5. Allergen-violating substitution attempt -> 400 Bad Request, original unchanged
+        bad_allergy_res = client.post(
+            f"/api/v1/nutrition/recommendations/{rec_id}/substitutions",
+            json={
+                "original_food_id": protein_item["food_id"],
+                "replacement_food_id": shrimp["id"],
+            },
+            headers=headers,
+        )
+        assert bad_allergy_res.status_code == 400
+
+        # Verify DB still has original protein_item unchanged
+        hist_check = client.get(
+            f"/api/v1/nutrition/recommendations/user/{user_id}", headers=headers
+        ).json()[0]["result"]
+        assert any(i["food_id"] == protein_item["food_id"] for i in hist_check["items"])
+
+        # 6. Valid substitution -> 200 OK, totals recalculated accurately and persisted
+        sub_res = client.post(
+            f"/api/v1/nutrition/recommendations/{rec_id}/substitutions",
+            json={
+                "original_food_id": protein_item["food_id"],
+                "replacement_food_id": safe_alt["id"],
+            },
+            headers=headers,
+        )
+        assert sub_res.status_code == 200, sub_res.text
+        updated = sub_res.json()
+        updated_ids = [i["food_id"] for i in updated["items"]]
+        assert safe_alt["id"] in updated_ids
+        assert protein_item["food_id"] not in updated_ids
+
+        assert abs(
+            updated["total_energy_kcal"]
+            - round(sum(i["energy_kcal"] for i in updated["items"]), 2)
+        ) < 0.05
+        assert abs(
+            updated["total_carbohydrate_g"]
+            - round(sum(i["carbohydrate_g"] for i in updated["items"]), 2)
+        ) < 0.05
+        assert abs(
+            updated["total_sodium_mg"]
+            - round(sum(i["sodium_mg"] for i in updated["items"] if i["sodium_mg"] is not None), 2)
+        ) < 0.05
+    finally:
+        client.delete(f"/api/v1/users/{user_id}", headers=headers)
+        client.delete(f"/api/v1/users/{other_id}", headers=other_headers)
+
+
+def test_daily_recommendations_today_and_empty_state():
+    """Verify GET /nutrition/recommendations/today returns empty state initially and aggregates daily meals."""
+    user_id, headers = _register_and_login("daily_rec")
+    try:
+        # 1. Empty state before generating any meal
+        empty_res = client.get(
+            "/api/v1/nutrition/recommendations/today", headers=headers
+        )
+        assert empty_res.status_code == 200, empty_res.text
+        empty_data = empty_res.json()
+        assert empty_data["meals"] == []
+        assert empty_data["daily_summary"]["meals_count"] == 0
+        assert empty_data["daily_summary"]["total_energy_kcal"] == 0.0
+
+        # 2. Generate breakfast and lunch
+        b_res = client.post(
+            "/api/v1/nutrition/recommend",
+            json={"user_id": user_id, "meal_type": "breakfast"},
+            headers=headers,
+        )
+        l_res = client.post(
+            "/api/v1/nutrition/recommend",
+            json={"user_id": user_id, "meal_type": "lunch"},
+            headers=headers,
+        )
+        assert b_res.status_code == 200 and l_res.status_code == 200
+
+        # 3. Fetch today's recommendations -> returns breakfast + lunch + daily_summary
+        today_res = client.get(
+            "/api/v1/nutrition/recommendations/today", headers=headers
+        )
+        assert today_res.status_code == 200, today_res.text
+        today_data = today_res.json()
+        assert len(today_data["meals"]) == 2
+        assert [m["meal_type"] for m in today_data["meals"]] == ["breakfast", "lunch"]
+        expected_kcal = round(
+            b_res.json()["total_energy_kcal"] + l_res.json()["total_energy_kcal"], 2
+        )
+        assert abs(today_data["daily_summary"]["total_energy_kcal"] - expected_kcal) < 0.05
+        assert today_data["daily_summary"]["meals_count"] == 2
+
+        # 4. Past date with no data -> HTTP 200 empty state
+        past_res = client.get(
+            "/api/v1/nutrition/recommendations/today?target_date=2020-01-01",
+            headers=headers,
+        )
+        assert past_res.status_code == 200
+        assert past_res.json()["meals"] == []
+    finally:
+        client.delete(f"/api/v1/users/{user_id}", headers=headers)
+
+
+

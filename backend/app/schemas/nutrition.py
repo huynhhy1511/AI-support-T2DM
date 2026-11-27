@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -60,11 +60,39 @@ class MealRecommendationResponse(BaseModel):
     total_protein_g: float
     total_fat_g: float
     total_fiber_g: float
+    total_sodium_mg: Optional[float] = None
+    total_saturated_fat_g: Optional[float] = None
     meal_balance_evaluation: str
     safety_notes: List[str]
     clinical_safety_disclaimer: str
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class FoodSubstitutionRequest(BaseModel):
+    original_food_id: uuid.UUID
+    replacement_food_id: uuid.UUID
+    serving_g: Optional[float] = Field(
+        None, gt=0, le=2000, description="Khẩu phần thay thế mong muốn tính theo gram (tùy chọn)"
+    )
+
+
+class DailyNutritionSummary(BaseModel):
+    total_energy_kcal: float = 0.0
+    total_carbohydrate_g: float = 0.0
+    total_protein_g: float = 0.0
+    total_fat_g: float = 0.0
+    total_fiber_g: float = 0.0
+    total_sodium_mg: float = 0.0
+    total_saturated_fat_g: float = 0.0
+    meals_count: int = 0
+
+
+class DailyRecommendationsResponse(BaseModel):
+    date: date
+    user_id: uuid.UUID
+    meals: List[MealRecommendationResponse]
+    daily_summary: DailyNutritionSummary
 
 
 class SafetyAlertSchema(BaseModel):

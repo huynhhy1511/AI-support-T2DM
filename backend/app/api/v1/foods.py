@@ -4,8 +4,10 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.api.deps import get_current_user
 from app.db.session import get_db
-from app.schemas.food import FoodCreate, FoodResponse, FoodUpdate
+from app.models.user import User
+from app.schemas.food import FoodAlternativeResponse, FoodCreate, FoodResponse, FoodUpdate
 from app.services import food_service
 
 router = APIRouter(prefix="/foods", tags=["foods"])
@@ -54,6 +56,39 @@ def seed_sample_endpoint(
 ) -> dict:
     added = food_service.seed_sample_foods_if_empty(db)
     return {"message": "Sample foods seeded successfully", "added_count": added}
+
+
+@router.get(
+    "/{food_id}/alternatives",
+    response_model=List[FoodAlternativeResponse],
+    summary="Get Safe Alternative Foods",
+    description=(
+        "Return safe same-category alternative foods filtered by user allergies and dietary preferences, "
+        "ranked by calorie and GI closeness."
+    ),
+)
+def get_food_alternatives_endpoint(
+    food_id: uuid.UUID,
+    limit: int = Query(5, ge=1, le=10),
+    dietary_preference: Optional[str] = Query(
+        None, description="Optional dietary preference override (e.g. vegetarian, vegan, low_sodium)"
+    ),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> List[FoodAlternativeResponse]:
+    alternatives = food_service.get_food_alternatives(
+        db=db,
+        food_id=food_id,
+        user_id=current_user.id,
+        limit=limit,
+        dietary_preference=dietary_preference,
+    )
+    if alternatives is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Food item with id '{food_id}' not found.",
+        )
+    return alternatives
 
 
 @router.get(
